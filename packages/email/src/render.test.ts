@@ -37,6 +37,17 @@ function render(overrides: Partial<Parameters<typeof renderEmail>[0]> = {}) {
 }
 
 describe("renderEmail", () => {
+  it("fills a placeholder the editor auto-linked and split with bold", () => {
+    // The production campaign body that reached an inbox as "{{recipient.name}}".
+    const email = render({
+      bodyHtml:
+        '<p>Hi <strong>{{</strong><a target="_blank" rel="noopener noreferrer nofollow" href="http://recipient.name"><strong>recipient.name</strong></a><strong>}}</strong>,</p><p><a href="{{reset.url}}">Reset</a></p>',
+    });
+    expect(email.html).toContain("Alex Morgan");
+    expect(email.html).not.toContain("{{");
+    expect(email.html).not.toContain("http://recipient.name");
+  });
+
   it("substitutes into the subject and the body", () => {
     const email = render();
     expect(email.subject).toBe("Reset your password, Alex Morgan");

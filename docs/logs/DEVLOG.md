@@ -27733,3 +27733,60 @@ failures (`site-url.test.ts` ×5, `changes-50-fixes`, `email-admin-conventions`)
 touched file; `check:email-templates` (10), `check:catalog-completeness` and
 `check:phantom-deps` OK. Not run: integration suites and the seed (Docker was
 not running), and the sign-up code step in a browser.
+
+## 2026-10-03 — Module 17: every email fits a phone without sideways scroll
+
+**Reported.** The mobile preview of `auth.password_changed` scrolled left and
+right. Measured in Chromium at 320/360/390px, EVERY email did — all 10 English
+templates, the 9 Arabic ones and both designs — because of the shell, not
+the bodies.
+
+**Cause.** Three things set a minimum width the card could not shrink below:
+(1) the footer's links and contacts are each `nowrap` and were joined by a
+separator span with NO whitespace, so the whole row was one unbreakable line
+(~420px with the footer padding); (2) a long unbroken string in a body — the
+reset/verify URL in "Button not working?", a long address — widened the cell
+(~496px); (3) the footer divider's `width:300px` counts toward a table's
+minimum width, since its `max-width:70%` cannot resolve during table sizing.
+
+**Fix (`layout.ts`).** Spaces around each footer separator; body and footer
+cells carry `word-break:break-word;overflow-wrap:anywhere`; the divider is
+`width:70%;max-width:300px`; every body `<img>` gets `max-width:100%;height:auto`.
+The shell gains one `<style>` block, a `max-width:620px` media query that
+tightens padding (`em-outer`/`em-head`/`em-body`/`em-foot`, `ed-panel`) and
+steps the title, code and button down. The inline styles remain the whole
+layout for a client that drops `<style>`, and that layout fits too.
+
+**Tests.** Probe (not committed): all 21 renders, with realistic long URLs and
+addresses, at 320/360/390px, with and without the `<style>` block and with a
+900px body image: no overflow. `layout.test.ts` +5 regression tests (48/48);
+three existing tests now find the bands by class. `@repo/email` unit 150/150,
+`tsc` and ESLint clean. Not checked: real mail clients (Gmail, Outlook, Apple Mail).
+
+## 2026-10-05 — Module 17: a placeholder the editor auto-linked is still a placeholder
+
+**Reported.** A custom campaign's test email arrived reading "Hi
+{{recipient.name}}," with the name underlined as a link.
+
+**Cause.** The rich-text editor auto-links bare domains, and `recipient.name`
+is one (`.name`, like `.email`, is a real TLD). With bold toggled mid-tag the
+stored body was `{{</strong><a href="http://recipient.name"><strong>
+recipient.name</strong></a><strong>}}`. Neither the save-time tag check nor
+the render's substitution matched it, so the review said "All tags are valid"
+and the reader got the braces. Production had exactly one such body (this
+campaign); no template translation or design.
+
+**Fix.** `repairTemplateTags` (`@repo/contracts`) moves a bare name out of the
+markup between `{{` and `}}`, keeps every tag in order after it (so the element
+tree is unchanged) and drops a link opened inside the braces. It runs inside
+`findTemplateVariables`, `replaceTemplateVariables` and `sanitizeEmailHtml`,
+so the check, the render and the stored body all agree, and existing drafts
+repair on their next render or save. The editor's link mark gets
+`shouldAutoLink: (url) => !isEmailVariableName(url)`, so a placeholder is no
+longer linked as it is typed.
+
+**Tests.** `email-template-tags.test.ts` (new, 6, using the production body),
+`render.test.ts` +1. `@repo/contracts` email suites 75/75, `@repo/email`
+render/sanitize/campaign 43/43; `tsc` clean on contracts and email; ESLint
+clean on the editor. Not run: the full web suite and a browser check of typing
+a placeholder in the editor.

@@ -88,7 +88,7 @@ import {
 } from "./ai-assistant.tsx";
 import { describeOversizeFile } from "./media-constraints.ts";
 import { MediaPickerDialog } from "./media-picker-dialog.tsx";
-import type { MediaCategory } from "@repo/contracts";
+import { isEmailVariableName, type MediaCategory } from "@repo/contracts";
 import {
   EDITORIAL_EXTENSIONS,
   EMAIL_EXTENSIONS,
@@ -356,6 +356,9 @@ export function RichTextEditor({
         link: {
           openOnClick: false,
           autolink: true,
+          // `recipient.name` is a valid domain; linked, it is no longer a
+          // placeholder and the reader gets the braces.
+          shouldAutoLink: (url) => !isEmailVariableName(url),
           defaultProtocol: "https",
           protocols: ["http", "https", "mailto"],
         },

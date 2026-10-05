@@ -262,6 +262,11 @@ describe("promotion surfaces (ADR-174)", () => {
     expect(band).toContain("<PromotionCta");
     expect(band).toContain('surface: "BAND", type: "IMPRESSION"');
     expect(band).toContain('surface: "BAND", type: "CLICK"');
+    // The selected tile's title card follows the button's destination, as a
+    // sibling of the tab rather than a link nested inside a <button>.
+    expect(band).toContain("const href = clock.recording ?? p.href;");
+    expect(band).toContain("<Link href={href} onClick={onEngage}");
+    expect(band).toContain("<TileTitle promotion={p} onEngage={onEngage} />");
   });
 
   it("draws the popup edge to edge with its own round, sticky close", () => {

@@ -236,12 +236,22 @@ export function inlineEditorialStyles(html: string, palette: EmailPalette): stri
   // none, so a panel built from a one-cell table would otherwise shrink to
   // its words in an inbox. `separate` so a cell's rounded corners survive.
   const tableStyle = "width:100%;border-collapse:separate;border-spacing:0;margin:16px 0";
+  // An image keeps its stored size where there is room and shrinks, in
+  // proportion, where there is not — a 600px picture on a 360px phone.
+  const imageStyle = "max-width:100%;height:auto";
   return sanitizeEmailHtmlWith(html, "RICH", {
     "*": (tagName, attribs) => {
       const classes = attribs.class?.split(/\s+/).filter(Boolean) ?? [];
       // A link's colour comes FIRST, so a tone class or the author's own
       // style — both more specific intents — still wins.
-      const base = tagName === "a" ? [linkStyle] : tagName === "table" ? [tableStyle] : [];
+      const base =
+        tagName === "a"
+          ? [linkStyle]
+          : tagName === "table"
+            ? [tableStyle]
+            : tagName === "img"
+              ? [imageStyle]
+              : [];
       if (classes.length === 0 && base.length === 0) return { tagName, attribs };
       const styles = [
         ...base,
@@ -340,6 +350,31 @@ export function pickEmailLogo(
 }
 
 /**
+ * The phone layout, as the one `<style>` block the shell carries. The inline
+ * styles are the DESKTOP layout and what a client that drops `<style>` gets —
+ * which is still a message that fits, because nothing in it is wider than its
+ * container. This block only reclaims space on a narrow screen: 32px of side
+ * padding at every level leaves a 320px phone barely 230px of text.
+ * `!important` because an inline style otherwise wins. Class names are the
+ * shell's own (`em-*`) plus the editor's block classes, which the sanitiser
+ * keeps on the element alongside the style they were folded into.
+ */
+function mobileStyles(): string {
+  return `<style>
+@media only screen and (max-width:620px){
+.em-outer{padding:12px 6px!important}
+.em-head{padding:24px 16px!important}
+.em-body{padding:24px 18px!important}
+.em-foot{padding:24px 16px 20px!important}
+.ed-panel{padding:16px!important}
+.ed-title{font-size:22px!important;line-height:28px!important}
+.ed-code{font-size:28px!important;letter-spacing:6px!important}
+.ed-btn,.ed-btn-secondary{padding:12px 20px!important}
+}
+</style>`;
+}
+
+/**
  * A table up to 600px wide on a muted ground — the shape every mail client
  * agrees on. Deliberately not a flex or grid layout: Outlook renders neither.
  * Fluid (`width:100%;max-width:600px`) so a phone narrows it, with a fixed
@@ -374,7 +409,10 @@ export function renderEmailShell(input: EmailShellInput): string {
     legal: "font-size:11px;line-height:18px",
   };
 
-  const separator = `<span style="color:${inks.muted};padding:0 10px;opacity:0.6">|</span>`;
+  // The spaces around the bar are the row's ONLY break opportunities: every
+  // item is `nowrap`, so without them the whole row is one unbreakable line
+  // (~300px) and a phone scrolls sideways under it.
+  const separator = ` <span style="color:${inks.muted};padding:0 6px;opacity:0.6">|</span> `;
   // Every footer line states its own centring: the cell's `align` reaches
   // inline content in most clients, but Outlook's Word engine applies a
   // paragraph's own alignment and defaults it to the start edge.
@@ -451,27 +489,35 @@ export function renderEmailShell(input: EmailShellInput): string {
 
   const divider =
     footerTop && footerBottom
-      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:12px 0 14px" align="center"><div style="width:300px;max-width:70%;margin:0 auto;height:1px;line-height:1px;font-size:0;background-color:${inks.muted};opacity:0.4">&nbsp;</div></td></tr></table>`
+      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:12px 0 14px" align="center"><div style="width:70%;max-width:300px;margin:0 auto;height:1px;line-height:1px;font-size:0;background-color:${inks.muted};opacity:0.4">&nbsp;</div></td></tr></table>`
       : "";
+
+  // A long unbroken string — a reset URL, an email address — may break
+  // anywhere rather than widen the message past a phone's screen. Both
+  // spellings: `overflow-wrap:anywhere` is the standard, `word-break` is what
+  // older WebKit and Outlook.com honour.
+  const wrap = "word-break:break-word;overflow-wrap:anywhere";
 
   return `<!doctype html>
 <html>
-<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /></head>
-<body style="margin:0;padding:0;background-color:${surface.surfaceMuted};font-family:${palette.fontFamily};color:${surface.textPrimary}">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><meta name="x-apple-disable-message-reformatting" />
+${mobileStyles()}
+</head>
+<body style="margin:0;padding:0;background-color:${surface.surfaceMuted};font-family:${palette.fontFamily};color:${surface.textPrimary};-webkit-text-size-adjust:100%;text-size-adjust:100%">
 ${preheader}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${surface.surfaceMuted};padding:24px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-outer" style="width:100%;background-color:${surface.surfaceMuted};padding:24px 12px">
   <tr>
     <td align="center">
       <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:${surface.background};border-radius:12px;overflow:hidden">
         <tr>
-          <td style="padding:32px;background-color:${inks.band};border-bottom:2px solid ${inks.rule};border-radius:12px 12px 0 0" align="center">${logo}</td>
+          <td class="em-head" style="padding:32px;background-color:${inks.band};border-bottom:2px solid ${inks.rule};border-radius:12px 12px 0 0" align="center">${logo}</td>
         </tr>
         <tr>
-          <td style="padding:28px 32px;font-size:16px;line-height:24px;color:${surface.textPrimary};background-color:${surface.background}">${input.bodyHtml}</td>
+          <td class="em-body" style="padding:28px 32px;font-size:16px;line-height:24px;color:${surface.textPrimary};background-color:${surface.background};${wrap}">${input.bodyHtml}</td>
         </tr>
         <tr>
-          <td style="padding:28px 48px 24px;text-align:center;background-color:${inks.band};border-top:2px solid ${inks.rule};border-radius:0 0 12px 12px" align="center">${footerTop}${divider}${footerBottom}</td>
+          <td class="em-foot" style="padding:28px 48px 24px;text-align:center;background-color:${inks.band};border-top:2px solid ${inks.rule};border-radius:0 0 12px 12px;${wrap}" align="center">${footerTop}${divider}${footerBottom}</td>
         </tr>
       </table>
       <!--[if mso]></td></tr></table><![endif]-->

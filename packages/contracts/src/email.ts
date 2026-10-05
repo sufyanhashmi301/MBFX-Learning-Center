@@ -257,6 +257,20 @@ export function emailTemplateVariables(key: EmailTemplateKey): string[] {
   return [...GLOBAL_EMAIL_VARIABLES, ...EMAIL_TEMPLATES[key].variables];
 }
 
+const EVERY_EMAIL_VARIABLE: ReadonlySet<string> = new Set<string>([
+  ...GLOBAL_EMAIL_VARIABLES,
+  ...Object.values(EMAIL_TEMPLATES).flatMap((definition) => definition.variables),
+]);
+
+/**
+ * Whether a word is one of the email placeholders. The editor asks before it
+ * auto-links: `recipient.name` and `contact.email` end in real top-level
+ * domains, and a link wrapped round a placeholder stops it being one.
+ */
+export function isEmailVariableName(text: string): boolean {
+  return EVERY_EMAIL_VARIABLE.has(text.trim());
+}
+
 export function isUrlEmailVariable(name: string): boolean {
   return (URL_EMAIL_VARIABLES as readonly string[]).includes(name);
 }
@@ -266,10 +280,53 @@ export function isUrlEmailVariable(name: string): boolean {
 // language someone can put behaviour in (ADR-078 #6).
 const VARIABLE_PATTERN = /\{\{\s*([A-Za-z][\w.]*)\s*\}\}/g;
 
+// `{{` … `}}` with only text and tags between them. The two alternatives
+// start on disjoint characters, so the lazy scan cannot backtrack badly.
+const MARKED_UP_VARIABLE = /\{\{((?:[^{}<]|<[^>]*>)*?)\}\}/g;
+const VARIABLE_NAME = /^\s*[A-Za-z][\w.]*\s*$/;
+
+/**
+ * Pull markup back out of a `{{variable}}` the editor split apart.
+ *
+ * The rich-text editor auto-links `recipient.name` (`.name` and `.email` are
+ * real top-level domains) and a bold toggled mid-tag splits it across marks,
+ * so a stored body read `{{</strong><a href="http://recipient.name"><strong>
+ * recipient.name</strong></a><strong>}}` — which neither the save-time check
+ * nor the render's substitution recognised, and the reader got the braces.
+ *
+ * The variable's text moves to the front and every tag is kept in its order
+ * after it, so the element tree is unchanged (an element that held only the
+ * name is left empty). The one exception is a link opened inside the braces:
+ * it is the auto-link, and it is dropped with a matching close. Anything that
+ * is not a bare name between the braces is left exactly as written.
+ */
+export function repairTemplateTags(html: string): string {
+  if (!html.includes("{{")) return html;
+  return html.replace(MARKED_UP_VARIABLE, (match, inner: string) => {
+    if (!inner.includes("<")) return match;
+    const tags = inner.match(/<[^>]*>/g) ?? [];
+    const text = inner.replace(/<[^>]*>/g, "");
+    if (!VARIABLE_NAME.test(text)) return match;
+    let openLinks = 0;
+    const kept = tags.filter((tag) => {
+      if (/^<a\b/i.test(tag)) {
+        openLinks += 1;
+        return false;
+      }
+      if (/^<\/a\s*>$/i.test(tag) && openLinks > 0) {
+        openLinks -= 1;
+        return false;
+      }
+      return true;
+    });
+    return `{{${text.trim()}}}${kept.join("")}`;
+  });
+}
+
 /** Every variable a string references, in first-seen order, without repeats. */
 export function findTemplateVariables(text: string): string[] {
   const found = new Set<string>();
-  for (const match of text.matchAll(VARIABLE_PATTERN)) {
+  for (const match of repairTemplateTags(text).matchAll(VARIABLE_PATTERN)) {
     const name = match[1];
     if (name) found.add(name);
   }
@@ -379,7 +436,9 @@ export type EmailTestSendInput = z.infer<typeof emailTestSendSchema>;
  * render replaces can never drift apart.
  */
 export function replaceTemplateVariables(text: string, resolve: (name: string) => string): string {
-  return text.replace(VARIABLE_PATTERN, (_match, name: string) => resolve(name));
+  return repairTemplateTags(text).replace(VARIABLE_PATTERN, (_match, name: string) =>
+    resolve(name),
+  );
 }
 
 export const EMAIL_DELIVERY_STATUSES = ["SENT", "FAILED", "SUPPRESSED"] as const;

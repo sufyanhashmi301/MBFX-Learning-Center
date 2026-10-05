@@ -167,10 +167,10 @@ describe("renderEmailShell", () => {
     // and keeps code-style #1's no-hex-literal rule intact in a test.
     const html = renderEmailShell(base);
     const inks = emailBandInks(palette);
-    const header = html.slice(html.indexOf('<td style="padding:32px'));
+    const header = html.slice(html.indexOf('<td class="em-head"'));
     expect(header).toContain(`background-color:${palette.brand.secondary}`);
     expect(header).toContain(`border-bottom:2px solid ${palette.brand.primary}`);
-    const footer = html.slice(html.lastIndexOf('<td style="padding:28px 48px 24px'));
+    const footer = html.slice(html.lastIndexOf('<td class="em-foot"'));
     expect(footer).toContain(`background-color:${inks.band}`);
     // The page keeps its own ground, so the message still has edges.
     expect(html).toContain(`background-color:${DEFAULT_LIGHT_SURFACE.surfaceMuted}`);
@@ -203,11 +203,11 @@ describe("renderEmailShell", () => {
 
   it("links the footer's site name to the home page when it has one", () => {
     const linked = renderEmailShell({ ...base, homeUrl: "https://site.test/ar" });
-    const footer = linked.slice(linked.lastIndexOf('<td style="padding:28px 48px 24px'));
+    const footer = linked.slice(linked.lastIndexOf('<td class="em-foot"'));
     expect(footer).toMatch(/<a href="https:\/\/site\.test\/ar" style="color:[^"]+">[^<]+<\/a>/);
 
     const plain = renderEmailShell(base);
-    const plainFooter = plain.slice(plain.lastIndexOf('<td style="padding:28px 48px 24px'));
+    const plainFooter = plain.slice(plain.lastIndexOf('<td class="em-foot"'));
     expect(plainFooter).not.toContain("<a ");
   });
 
@@ -238,7 +238,7 @@ describe("renderEmailShell", () => {
       contacts: [{ label: "Email", value: "hello@site.test", url: "mailto:hello@site.test" }],
       legalLines: ["© 2026 MBX."],
     });
-    const footer = html.slice(html.lastIndexOf('<td style="padding:28px 48px 24px'));
+    const footer = html.slice(html.lastIndexOf('<td class="em-foot"'));
     const sizes = [...footer.matchAll(/font-size:(\d+)px/g)]
       .map((m) => Number(m[1]))
       .filter((size) => size > 0);
@@ -358,5 +358,49 @@ describe("the email block vocabulary (changes-61, ADR-184)", () => {
     );
     expect(html).toMatch(/<table style="width:100%/);
     expect(html).toMatch(/<td class="ed-panel" style="background-color:/);
+  });
+});
+
+// A phone must never scroll sideways under a message. A real browser found
+// three things forcing a ~420px minimum width on every template; each is
+// pinned here so it cannot come back.
+describe("renderEmailShell on a phone", () => {
+  const base = { bodyHtml: "<p>hi</p>", palette, siteName: "MBX Learning Center" };
+
+  it("leaves a break opportunity between footer links, which are each nowrap", () => {
+    const html = renderEmailShell({
+      ...base,
+      links: [
+        { url: "https://site.test/a", label: "Log in" },
+        { url: "https://site.test/b", label: "Contact support" },
+      ],
+    });
+    expect(html).toMatch(/<\/a> <span[^>]*>\|<\/span> <a /);
+  });
+
+  it("lets a long URL or address in the body break rather than widen the card", () => {
+    const html = renderEmailShell(base);
+    expect(html).toMatch(/class="em-body" style="[^"]*overflow-wrap:anywhere/);
+    expect(html).toMatch(/class="em-foot" style="[^"]*overflow-wrap:anywhere/);
+  });
+
+  it("never gives the footer divider a fixed pixel width", () => {
+    const html = renderEmailShell({ ...base, tagline: "Tag", legalLines: ["© 2026"] });
+    expect(html).toContain("width:70%;max-width:300px");
+    expect(html).not.toMatch(/[^-]width:300px/);
+  });
+
+  it("tightens padding under a phone-width media query", () => {
+    const html = renderEmailShell(base);
+    expect(html).toContain("@media only screen and (max-width:620px)");
+    expect(html).toMatch(/\.em-body\{padding:[^}]*!important\}/);
+  });
+
+  it("shrinks an author's image to the card instead of overflowing it", () => {
+    const output = inlineEditorialStyles(
+      '<p><img src="https://site.test/a.png" width="900" height="300" alt="a"></p>',
+      palette,
+    );
+    expect(output).toMatch(/<img[^>]*style="max-width:100%;height:auto"/);
   });
 });

@@ -9,7 +9,7 @@
 // allowlist. It is not wider in any way that executes: no script, no iframe,
 // no form, no object, and every `on*` handler is dropped by not being listed.
 import sanitize from "sanitize-html";
-import type { EmailBodyMode } from "@repo/contracts";
+import { repairTemplateTags, type EmailBodyMode } from "@repo/contracts";
 
 /** Properties an inline `style` may carry. Layout and paint only. */
 const STYLE_PROPERTIES = [
@@ -134,7 +134,9 @@ function options(mode: EmailBodyMode): sanitize.IOptions {
 }
 
 export function sanitizeEmailHtml(html: string, mode: EmailBodyMode): string {
-  return sanitize(html, options(mode));
+  // Repaired BEFORE sanitising, so what is stored is a clean `{{name}}` and
+  // the auto-link the editor wrapped it in never reaches the database.
+  return sanitize(repairTemplateTags(html), options(mode));
 }
 
 /**

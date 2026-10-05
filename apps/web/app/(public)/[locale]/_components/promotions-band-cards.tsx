@@ -46,6 +46,7 @@ import {
   type PromotionKindInput,
 } from "@repo/contracts";
 import type { PublicPromotion } from "@repo/core";
+import { Link } from "@repo/i18n/navigation";
 import { Badge } from "@repo/ui/components/badge";
 import { Container } from "@repo/ui/components/container";
 import { Section } from "@repo/ui/components/section";
@@ -313,6 +314,7 @@ function Spotlight({ promotions }: { promotions: PublicPromotion[] }) {
                         tabRefs.current[index] = el;
                       }}
                       onSelect={() => select(index)}
+                      onEngage={engage}
                     />
                     {selected ? <TileFacts key={p.id} promotion={p} /> : null}
                   </div>
@@ -373,6 +375,7 @@ function Tile({
   panelId,
   buttonRef,
   onSelect,
+  onEngage,
 }: {
   promotion: PublicPromotion;
   selected: boolean;
@@ -381,8 +384,8 @@ function Tile({
   panelId: string;
   buttonRef: (element: HTMLButtonElement | null) => void;
   onSelect: () => void;
+  onEngage: () => void;
 }) {
-  const t = useTranslations("promotions");
   const Icon = KIND_ICON[p.kind];
   const frame = cn(
     "group relative block aspect-4/5 w-full overflow-hidden rounded-lg bg-muted text-start transition-shadow duration-700",
@@ -414,18 +417,7 @@ function Tile({
           {p.badge}
         </span>
       ) : null}
-      {selected ? (
-        <span className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md bg-background/90 p-2 pe-3 shadow-sm backdrop-blur-sm">
-          {/* A glyph disc: its geometry is a circle (ADR-107). */}
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Icon aria-hidden className="size-4" />
-          </span>
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold text-foreground">{p.title}</span>
-            <span className="truncate text-xs text-muted-foreground">{t(`kinds.${p.kind}`)}</span>
-          </span>
-        </span>
-      ) : (
+      {selected ? null : (
         <span
           aria-hidden
           className="absolute inset-0 bg-background/10 transition-colors group-hover:bg-transparent"
@@ -434,25 +426,95 @@ function Tile({
     </>
   );
 
-  if (!multi) return <div className={frame}>{picture}</div>;
+  // The title card is a SIBLING of the tab, laid over it, never inside it: a
+  // link nested in a `<button>` is invalid markup and its clicks would select
+  // the tab instead of following the link.
   return (
-    <button
-      ref={buttonRef}
-      type="button"
-      id={id}
-      role="tab"
-      aria-selected={selected}
-      aria-controls={panelId}
-      aria-label={p.title}
-      tabIndex={selected ? 0 : -1}
-      onClick={onSelect}
-      className={cn(
-        frame,
-        "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+    <div className="relative w-full">
+      {multi ? (
+        <button
+          ref={buttonRef}
+          type="button"
+          id={id}
+          role="tab"
+          aria-selected={selected}
+          aria-controls={panelId}
+          aria-label={p.title}
+          tabIndex={selected ? 0 : -1}
+          onClick={onSelect}
+          className={cn(
+            frame,
+            "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+          )}
+        >
+          {picture}
+        </button>
+      ) : (
+        <div className={frame}>{picture}</div>
       )}
-    >
-      {picture}
-    </button>
+      {selected ? <TileTitle promotion={p} onEngage={onEngage} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The selected tile's title card. It follows the same destination as the
+ * panel's button — the recording after an event, otherwise the promotion's
+ * own link — and is plain text when there is neither.
+ */
+function TileTitle({
+  promotion: p,
+  onEngage,
+}: {
+  promotion: PublicPromotion;
+  onEngage: () => void;
+}) {
+  const t = useTranslations("promotions");
+  const clock = usePromotionClock(p);
+  const Icon = KIND_ICON[p.kind];
+  const href = clock.recording ?? p.href;
+  const className = cn(
+    "absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md bg-background/90 p-2 pe-3 shadow-sm backdrop-blur-sm",
+    href &&
+      "transition-colors hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+  );
+  const body = (
+    <>
+      {/* A glyph disc: its geometry is a circle (ADR-107). */}
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+        <Icon aria-hidden className="size-4" />
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-sm font-semibold text-foreground">{p.title}</span>
+        <span className="truncate text-xs text-muted-foreground">{t(`kinds.${p.kind}`)}</span>
+      </span>
+      {href && p.external && !clock.recording ? (
+        <>
+          <ExternalLink aria-hidden className="ms-auto size-4 shrink-0 text-muted-foreground" />
+          <span className="sr-only"> — {t("opensInNewTab")}</span>
+        </>
+      ) : null}
+    </>
+  );
+
+  if (!href) return <span className={className}>{body}</span>;
+  if (p.external && !clock.recording) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onEngage}
+        className={className}
+      >
+        {body}
+      </a>
+    );
+  }
+  return (
+    <Link href={href} onClick={onEngage} className={className}>
+      {body}
+    </Link>
   );
 }
 
