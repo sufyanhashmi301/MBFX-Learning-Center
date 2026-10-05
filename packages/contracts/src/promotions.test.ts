@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ROUTE_PATHS } from "./navigation.ts";
+import { ROUTE_PATHS } from "./index.ts";
 import {
   PROMOTION_EXCLUDED_PATHS,
   PROMOTION_PLACEMENTS,
@@ -27,7 +27,7 @@ import {
   promotionEventsSchema,
   type PromotionEvent,
   type PromotionPlacement,
-} from "./promotions.ts";
+} from "./index.ts";
 import { translatePrefillSchema } from "./translate.ts";
 
 const START = "2026-10-01T09:00:00.000Z";

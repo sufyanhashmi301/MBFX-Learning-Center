@@ -11,6 +11,7 @@
 // No words live here (code-style #2). The admin's filter labels and every
 // message a visitor reads come from the catalog.
 import { z } from "zod";
+import { NEWSLETTER_HONEYPOT_FIELD } from "./newsletter-honeypot.ts";
 
 /**
  * Where the public FORM is drawn. A closed set rather than free text because
@@ -32,17 +33,6 @@ export type NewsletterSource = (typeof NEWSLETTER_SOURCES)[number];
 
 export const SUBSCRIBER_STATUSES = ["PENDING", "ACTIVE", "UNSUBSCRIBED"] as const;
 export type SubscriberStatusValue = (typeof SUBSCRIBER_STATUSES)[number];
-
-/**
- * The honeypot field's name. A real visitor never sees it, so a filled value
- * is a bot; the name is deliberately plausible ("website" is what a
- * comment-spam bot expects to find) rather than `honeypot`.
- *
- * Exported so the form and the action cannot disagree about which field to
- * check — the failure mode of a hard-coded string on both sides is a honeypot
- * that silently stops working.
- */
-export const NEWSLETTER_HONEYPOT_FIELD = "website";
 
 /**
  * What the public form submits.

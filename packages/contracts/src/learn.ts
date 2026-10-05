@@ -14,7 +14,7 @@
 // Both are enforced here so the admin form, the server action and the service
 // all fail identically, rather than in three slightly different ways.
 import { z } from "zod";
-import { ROUTE_PATHS } from "./navigation.ts";
+import { ROUTE_PATHS } from "./routes.ts";
 
 // ─── Tracks (ADR-055 #2) ─────────────────────────────────────
 //

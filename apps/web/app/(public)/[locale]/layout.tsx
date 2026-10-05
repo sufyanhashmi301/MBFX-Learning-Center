@@ -5,7 +5,7 @@ import { getMessages, getTranslations, setRequestLocale } from "next-intl/server
 import { notFound } from "next/navigation";
 import { getBrandAssets } from "@repo/core";
 import { getSetting } from "@repo/settings";
-import { getServableLocales, isServableLocale } from "@repo/i18n";
+import { ADMIN_MESSAGE_NAMESPACES, getServableLocales, isServableLocale } from "@repo/i18n";
 import { LOCALE_DIRECTION, routing } from "@repo/i18n/routing";
 import { buildThemeStyleSheet, getActiveTheme } from "@repo/theme";
 import { curatedFontVariables } from "@repo/ui/fonts";
@@ -137,7 +137,14 @@ export default async function PublicRootLayout({ children, params }: LayoutProps
   // elsewhere: declare context before the async work, not after.
   setRequestLocale(locale);
 
-  const messages = await getMessages();
+  // The admin namespaces stay on the server. They are English staff text that
+  // no public client component reads, and at ~180 KB they were most of the
+  // catalog and a third of every public page's HTML (changes-62 #2). Server
+  // components still read the whole catalog through `getTranslations`.
+  const allMessages = await getMessages();
+  const messages = Object.fromEntries(
+    Object.entries(allMessages).filter(([namespace]) => !ADMIN_MESSAGE_NAMESPACES.has(namespace)),
+  );
 
   // Cached read (tag "theme", ADR-004): resolved at build/revalidate time
   // for these static routes, invalidated by an admin theme save. The style

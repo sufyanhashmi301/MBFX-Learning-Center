@@ -77,22 +77,20 @@ const ADMIN_FRAMABLE_PATHS = new Set(["/keystone/api/email/preview"]);
 
 // Google reCAPTCHA v3 (ADR-156) — the origins Google's own CSP guidance names:
 // its loader and the script it fetches, and the frame that does the scoring.
-// Whether the check is ON is a database setting (Settings → General →
-// reCAPTCHA), which the proxy does not read, so the origins are allowed on the
-// pages that CAN load it and on no other: the three credential forms, the
-// support form, and the settings tab that tests a key. On /keystone the script-src entries are
-// inert ('strict-dynamic' ignores host lists), and the script runs because a
-// nonced Next chunk inserts it. On public pages they are what lets it load.
+//
+// On EVERY page since ADR-185 (superseding ADR-156 #9). A document keeps the
+// CSP it was first served with for the whole client-side session, so a
+// reader who lands on `/` and clicks through to `/sign-in` runs the sign-in
+// form under the HOME page's policy. A per-page allowance therefore failed on
+// the commonest path to a form (changes-62 #5). On /keystone the script-src
+// entries are inert ('strict-dynamic' ignores host lists), and the script runs
+// because a nonced Next chunk inserts it.
 const RECAPTCHA_SCRIPT_SRC = "https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/";
 const RECAPTCHA_FRAME_SRC =
   "https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/";
+const RECAPTCHA_CONNECT_SRC = "https://www.google.com/recaptcha/";
 
-/** Staff paths with a reCAPTCHA form: the sign-in, and the tab that tests a key. */
-const RECAPTCHA_ADMIN_PATHS = new Set(["/keystone", "/keystone/settings/general"]);
-/** Public pages with a reCAPTCHA form, by their locale-less single segment. */
-const RECAPTCHA_PUBLIC_PAGES = new Set(["sign-in", "sign-up", "support"]);
-
-function baseCsp(nonce: string | null, recaptcha = false): string {
+function baseCsp(nonce: string | null): string {
   // Next's development runtime evaluates code (React Refresh); production
   // never does, so the allowance exists only where it is needed.
   const devEval = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
@@ -107,10 +105,9 @@ function baseCsp(nonce: string | null, recaptcha = false): string {
   //   #6). Everything else in the policy still binds them: no third-party
   //   script origin, no plugin, no foreign base URI or form target, frames
   //   from a closed list.
-  const recaptchaScript = recaptcha ? ` ${RECAPTCHA_SCRIPT_SRC}` : "";
   const scriptSrc = nonce
-    ? `'self' 'nonce-${nonce}' 'strict-dynamic'${recaptchaScript}${devEval}`
-    : `'self' 'unsafe-inline'${recaptchaScript}${devEval}`;
+    ? `'self' 'nonce-${nonce}' 'strict-dynamic' ${RECAPTCHA_SCRIPT_SRC}${devEval}`
+    : `'self' 'unsafe-inline' ${RECAPTCHA_SCRIPT_SRC}${devEval}`;
   // Styles stay 'unsafe-inline' on BOTH surfaces: component libraries
   // (sonner, Base UI's positioning) inject <style> at runtime without a
   // nonce, and a nonce in this directive would switch 'unsafe-inline' off.
@@ -128,7 +125,7 @@ function baseCsp(nonce: string | null, recaptcha = false): string {
     // reCAPTCHA also POSTs to google.com/recaptcha/api2/clr from the page
     // itself, not from its frame; without this the live CSP report log filled
     // with `clr` violations on /support and the challenge never completed.
-    `connect-src 'self'${recaptcha ? " https://www.google.com/recaptcha/" : ""}`,
+    `connect-src 'self' ${RECAPTCHA_CONNECT_SRC}`,
     // The third parties we frame, and the only ones.
     //
     // - The economic calendar widget (ADR-050).
@@ -149,7 +146,7 @@ function baseCsp(nonce: string | null, recaptcha = false): string {
     // - TradingView's widget host, for the live-rates board and the market
     //   news band (ADR-136 §2). Framed directly, like the calendar, so no
     //   vendor script is ever allowed.
-    `frame-src 'self' https://www.tradingview-widget.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com${recaptcha ? ` ${RECAPTCHA_FRAME_SRC}` : ""}`,
+    `frame-src 'self' https://www.tradingview-widget.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com ${RECAPTCHA_FRAME_SRC}`,
     `base-uri 'self'`,
     `form-action 'self'`,
     `object-src 'none'`,
@@ -159,12 +156,8 @@ function baseCsp(nonce: string | null, recaptcha = false): string {
   ].join("; ");
 }
 
-function contentSecurityPolicy(
-  nonce: string | null,
-  sameOrigin: boolean,
-  recaptcha = false,
-): string {
-  return `${baseCsp(nonce, recaptcha)}; frame-ancestors ${sameOrigin ? "'self'" : "'none'"}`;
+function contentSecurityPolicy(nonce: string | null, sameOrigin: boolean): string {
+  return `${baseCsp(nonce)}; frame-ancestors ${sameOrigin ? "'self'" : "'none'"}`;
 }
 
 function applySecurityHeaders(
@@ -173,18 +166,13 @@ function applySecurityHeaders(
   nonce: string | null,
   /** ADR-078 #8 — the email preview, and nothing else on /keystone. */
   framable = false,
-  /** ADR-156 — the page can load Google's reCAPTCHA. */
-  recaptcha = false,
 ) {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   const sameOrigin = surface === "public" || framable;
   response.headers.set("X-Frame-Options", sameOrigin ? "SAMEORIGIN" : "DENY");
-  response.headers.set(
-    "Content-Security-Policy",
-    contentSecurityPolicy(nonce, sameOrigin, recaptcha),
-  );
+  response.headers.set("Content-Security-Policy", contentSecurityPolicy(nonce, sameOrigin));
   // HSTS in production only (changes-49): a browser that has seen it will
   // refuse plain HTTP for two years, which on a developer's localhost would
   // break every other project served on that host.
@@ -330,7 +318,20 @@ function notFound(request: NextRequest, surface: "admin" | "public") {
  * "let it through": a page exists, the draft cookie is set (a preview must
  * render whatever the resolver thinks), or the lookup failed — a slow or
  * broken lookup falls back to the old soft-404 rather than taking pages down.
+ *
+ * The lookup goes to THIS process over loopback, never to the request's own
+ * origin. Behind nginx and Cloudflare that origin is built from the forwarded
+ * host and protocol, so the request left the box, and in production it failed
+ * every time. Every unknown address, `/about` (a seeded redirect) included,
+ * fell through to the soft 404 and answered 200 (changes-62 #6).
  */
+function lookupOrigin(request: NextRequest): string {
+  const port = process.env.PORT;
+  // `localhost`, never 127.0.0.1: `next start -H localhost` may bind IPv6 only
+  // (docs/ops/deploy.md §5).
+  return port ? `http://localhost:${port}` : request.nextUrl.origin;
+}
+
 async function resolveUnownedPath(
   request: NextRequest,
   locale: string,
@@ -339,7 +340,7 @@ async function resolveUnownedPath(
   if (request.cookies.has("__prerender_bypass")) return null;
   const path = `/${rest.join("/")}`;
   try {
-    const lookup = new URL("/api/public-path", request.nextUrl.origin);
+    const lookup = new URL("/api/public-path", lookupOrigin(request));
     lookup.searchParams.set("locale", locale);
     lookup.searchParams.set("path", path);
     const response = await fetch(lookup, { signal: AbortSignal.timeout(3000) });
@@ -425,9 +426,8 @@ export async function proxy(request: NextRequest) {
     if (preferred) return applySecurityHeaders(preferred, "public", null);
   }
 
-  const recaptcha = rest.length === 1 && RECAPTCHA_PUBLIC_PAGES.has(first ?? "");
   const response = prefix === "" ? await intlServed(request) : intl(request);
-  return applySecurityHeaders(response, "public", null, false, recaptcha);
+  return applySecurityHeaders(response, "public", null);
 }
 
 /**
@@ -439,12 +439,11 @@ export async function proxy(request: NextRequest) {
 function adminResponse(request: NextRequest, pathname: string) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const framable = ADMIN_FRAMABLE_PATHS.has(pathname);
-  const recaptcha = RECAPTCHA_ADMIN_PATHS.has(pathname);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
-  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy(nonce, framable, recaptcha));
+  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy(nonce, framable));
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  return applySecurityHeaders(response, "admin", nonce, framable, recaptcha);
+  return applySecurityHeaders(response, "admin", nonce, framable);
 }
 
 /**

@@ -27,7 +27,7 @@ import {
   toolConfigSchema,
   toolPath,
 } from "./tools.ts";
-import { ROUTE_PATHS } from "./navigation.ts";
+import { ROUTE_PATHS } from "./index.ts";
 
 describe("TOOL_KEYS registry", () => {
   it("registers eleven tools: the reference's eight and changes-41's three", () => {

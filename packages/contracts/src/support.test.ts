@@ -7,7 +7,7 @@
 // property the sender downstream is entitled to assume.
 import { describe, expect, it } from "vitest";
 
-import { NEWSLETTER_HONEYPOT_FIELD } from "./newsletter.ts";
+import { NEWSLETTER_HONEYPOT_FIELD } from "./index.ts";
 import { SUPPORT_HONEYPOT_FIELD, SUPPORT_MESSAGE_MAX, supportRequestSchema } from "./support.ts";
 
 const VALID = {

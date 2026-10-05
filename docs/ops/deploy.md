@@ -199,13 +199,47 @@ module.exports = {
       script: "node_modules/next/dist/bin/next",
       args: "start -H localhost -p 3003",
       exec_mode: "fork", // pm2 defaults to cluster when `instances` is set
-      env: { NODE_ENV: "production" },
-      instances: 1, // one process; see "zero downtime" below before raising this
-      max_memory_restart: "1500M",
+      // V8's own ceiling. Without it V8 sizes the heap from the host's RAM
+      // (~2 GB on the live 8 GB box), sees no pressure below that, and lets
+      // garbage pile up until pm2 kills the process at 1.5 GB (changes-62 #1).
+      // The retained heap after a full crawl is ~280 MB, peaking ~420 MB
+      // under six concurrent readers, so 768 MB forces collection long before
+      // the restart line without starving a real peak.
+      node_args: "--max-old-space-size=768",
+      env: {
+        NODE_ENV: "production",
+        PORT: "3003",
+        // glibc gives every thread its own malloc arena; sharp's image
+        // workers then hold RSS the process never returns. Two is the
+        // standard cap for a Node server that resizes images.
+        MALLOC_ARENA_MAX: "2",
+      },
+      instances: 1, // one process; see "One process, not a cluster" below
+      max_memory_restart: "1500M", // the safety net, not the mechanism
     },
   ],
 };
 ```
+
+`pm2 reload` does not re-read `node_args` or `env` from this file. After
+changing either: `pm2 delete mbx && pm2 start ecosystem.config.cjs && pm2 save`.
+
+**Why memory climbs page by page, then stops** (measured 2026-10-05, a full
+sitemap crawl against a production build, three passes, then six at once):
+Next keeps two in-memory caches, the `"use cache"` entries and the rendered
+pages, each capped at 50 MB of serialized bytes. A cold process grows as it
+renders pages it has not seen, then levels off at ~850 MB RSS once both are
+full; the heap retained after a forced GC stays at ~280 MB from the second
+pass on. That is not a leak. The restarts came from what sits on top of it:
+concurrent renders, image optimisation (sharp is native memory, invisible to
+V8), and V8 collecting late because nothing told it to collect sooner.
+
+**One process, not a cluster.** Two instances would survive one restart, but
+Next's `"use cache"` entries and their tags live in each process's memory. An
+admin's save calls `revalidateTag` in the process that handled it, and the
+other one serves the old page until its entries expire (Next's self-hosting
+guide, "Multi-Instance Cache Coordination"). Running two needs a shared cache
+handler that coordinates tags through Redis first.
 
 ```bash
 pm2 start /srv/mbx/ecosystem.config.cjs && pm2 save && pm2 startup
@@ -491,3 +525,21 @@ request time link their CSS and JS under the RUNTIME id, so a process still
 carrying an older deploy's id serves `?dpl=<old>` asset URLs beside the build's
 `?dpl=<new>` ones, the edge caches a 404 for one of them, and the skew check
 fails. `scripts/deploy.sh` reloads with `--update-env` for this reason.
+
+**Early Hints replays a previous build's stylesheets (2026-10-05, changes-64).**
+Cloudflare's Early Hints (Speed → Optimization) caches a page's `Link:
+rel=preload` response header per URL and answers later requests with a `103`
+naming those files before the page arrives. The cached header outlives a
+deploy, so browsers preloaded the old build's CSS ("preloaded but not used"
+on every admin page) and, for files no release still holds, got a 404. The app
+no longer sends the header (`reactMaxHeadersLength: 0` in `next.config.ts`),
+so there is nothing new to cache. Hints cached before that deploy can linger
+for a while; switching Early Hints off in the dashboard clears them at once and
+costs nothing here, since the stylesheets head the HTML anyway. Check it:
+
+```bash
+curl -s --http2 -D - -o /dev/null https://example.com/some-page | grep -iE '^(HTTP|link)'
+```
+
+Run it twice. A `HTTP/2 103` line on the second run means Cloudflare is still
+replaying hints.

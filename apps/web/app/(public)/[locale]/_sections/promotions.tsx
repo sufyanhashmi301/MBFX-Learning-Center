@@ -9,8 +9,16 @@
 // `<Suspense>`, and the band sits high on the page — inside the eager bands
 // the home page renders without a boundary — so the boundary lives HERE.
 //
+// **Why it waits for a request.** The band used to leave that decision to
+// Next: the prerender's warming pass filled the short-lived entry, the final
+// pass then excluded it, and every ISR regeneration of the home page logged
+// "Unexpected cache miss after cache warming phase" (changes-62 #4) — a
+// database read per regeneration whose result was thrown away. `connection()`
+// says up front that this band is request-time, so the prerender skips it.
+//
 // The fallback is nothing, not a skeleton: most of the time no promotion is
 // live, and a placeholder stripe that then vanishes reads as a bug.
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { HOME_BAND_PLACEMENTS } from "@repo/contracts";
 import { getLivePromotions } from "@repo/core";
@@ -19,6 +27,7 @@ import { PromotionsBandCards } from "../_components/promotions-band-cards.tsx";
 import type { SectionProps } from "./registry.ts";
 
 async function PromotionsBandData({ locale }: { locale: string }) {
+  await connection();
   const live = await getLivePromotions(locale, await unavailablePromotionTargets());
   const inBand = live.filter(
     (p) =>

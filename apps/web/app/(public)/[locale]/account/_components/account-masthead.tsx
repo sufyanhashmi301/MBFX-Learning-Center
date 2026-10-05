@@ -28,6 +28,7 @@ import { Link } from "@repo/i18n/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/components/avatar";
 import { Badge } from "@repo/ui/components/badge";
 import { Container } from "@repo/ui/components/container";
+import { EmailOff } from "../../../../_components/email-off.tsx";
 import { ProgressBar } from "@repo/ui/components/progress-bar";
 import { Section } from "@repo/ui/components/section";
 import { DATE_FORMAT_OPTIONS, getSiteTimeZone } from "@repo/utils";
@@ -87,7 +88,11 @@ export async function AccountMasthead({
             <h1 className="text-3xl font-semibold tracking-tight">
               {t(titleKey, { name: profile.name })}
             </h1>
-            <p className="truncate text-sm text-muted-foreground">{profile.email}</p>
+            {/* This band renders inside a streamed segment, where no
+                layout-level marker reaches (changes-63 #8). */}
+            <EmailOff>
+              <p className="truncate text-sm text-muted-foreground">{profile.email}</p>
+            </EmailOff>
             <ul aria-label={t("status.label")} className="flex flex-wrap gap-2 pt-1">
               <li>
                 {profile.emailVerified ? (

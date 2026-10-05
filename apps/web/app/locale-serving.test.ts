@@ -83,6 +83,14 @@ describe("the sitemap advertises only what is served", () => {
     expect(source).toMatch(/const localised = [\s\S]*?served\(entries\)/);
   });
 
+  it("lists a locale's home as /ar, never /ar/ (changes-62 #7)", () => {
+    // `/ar/` answers a 308 to `/ar`; a sitemap should name the final address.
+    // `publicPagePath` owns the "/" special case.
+    expect(code(SITEMAP)).toMatch(
+      /staticPaths\.map\(\(path\) => \(\{\s*url: `\$\{base\}\$\{publicPagePath\(locale, routing\.defaultLocale, path\)\}`/,
+    );
+  });
+
   it("still uses routing.defaultLocale for the unprefixed path", () => {
     // The default locale has no prefix (`localePrefix: "as-needed"`), and that
     // is a routing fact, not an activation one — so this reader stays.

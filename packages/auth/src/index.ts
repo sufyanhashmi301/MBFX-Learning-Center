@@ -29,6 +29,7 @@ import { redisSecondaryStorage } from "./redis-secondary-storage.ts";
 import { notifyEmailVerified } from "./email-verified.ts";
 import { staffImpersonation, startImpersonation } from "./impersonation.ts";
 import { recaptchaGuard } from "./captcha.ts";
+import { configuredSocialProviders } from "./social-providers.ts";
 import {
   DISABLED_EMAIL_OTP_PATHS,
   VERIFY_CODE_MINUTES,
@@ -337,16 +338,7 @@ const authOptions: BetterAuthOptions = {
     },
   },
 
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-    },
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID ?? "",
-      clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
-    },
-  },
+  socialProviders: configuredSocialProviders(process.env),
 
   rateLimit: {
     enabled: true,

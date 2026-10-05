@@ -11,6 +11,7 @@ import { getPathname, redirect } from "@repo/i18n/navigation";
 import { getSetting } from "@repo/settings";
 import { Container } from "@repo/ui/components/container";
 import { Section } from "@repo/ui/components/section";
+import { EmailOff } from "../../../../_components/email-off.tsx";
 import { requireLearnerSession } from "../_lib/learner-session.ts";
 import { AccountMasthead } from "./account-masthead.tsx";
 import { AddressPanel } from "./address-panel.tsx";
@@ -59,15 +60,19 @@ export async function ProfileContent({
             <AddressPanel address={view.address} />
           </div>
           <div className="flex flex-col gap-6">
-            <EmailVerificationPanel
-              email={view.email}
-              emailVerified={view.emailVerified}
-              justVerified={justVerified}
-              justChanged={justChanged}
-              // Back to THIS panel once Better Auth has flipped the flag.
-              callbackURL={`${getPathname({ href: ACCOUNT_PATH, locale })}?verified=1`}
-              changeCallbackURL={`${getPathname({ href: ACCOUNT_PATH, locale })}?emailChanged=1`}
-            />
+            {/* The panel prints the address inside this streamed segment
+                (changes-63 #8). */}
+            <EmailOff>
+              <EmailVerificationPanel
+                email={view.email}
+                emailVerified={view.emailVerified}
+                justVerified={justVerified}
+                justChanged={justChanged}
+                // Back to THIS panel once Better Auth has flipped the flag.
+                callbackURL={`${getPathname({ href: ACCOUNT_PATH, locale })}?verified=1`}
+                changeCallbackURL={`${getPathname({ href: ACCOUNT_PATH, locale })}?emailChanged=1`}
+              />
+            </EmailOff>
             <SecurityPanel
               hasPassword={view.hasPassword}
               twoFactorEnabled={view.twoFactorEnabled}

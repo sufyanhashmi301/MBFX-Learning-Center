@@ -27790,3 +27790,177 @@ longer linked as it is typed.
 render/sanitize/campaign 43/43; `tsc` clean on contracts and email; ESLint
 clean on the editor. Not run: the full web suite and a browser check of typing
 a placeholder in the editor.
+
+## 2026-10-05 — Module 14/12/04: production report fixes — memory, payload, CSP, real 404s (changes-62, ADR-185)
+
+**Scope.** changes-62 items 1–7. Items 8 (hydration #418) and 9 (unused
+preloads) were taken by a parallel session under changes-63.
+
+**#1 Memory.** Measured, not guessed: a production build crawled over its
+whole sitemap (329 URLs), three passes, then six clients at once, reading the
+process through the inspector. The heap retained after a forced GC levels off
+at ~280 MB from pass two; RSS levels off at ~850 MB (prod idles at 824 MB).
+**Not a leak.** Growth per new page is Next's two in-memory caches (`"use
+cache"` entries and rendered pages, 50 MB each) filling up. The restarts come
+from what sits on top: concurrent renders, sharp's native memory for
+`/_next/image` (+~200 MB peak locally, worse under glibc), and V8 collecting
+late because its heap limit (~2 GB on the 8 GB host) is above pm2's 1.5 GB
+kill line. Shipped: `deploy-release.sh` links `.next/cache/images` to
+`~/shared/next-image-cache`, so a deploy no longer starts every image cold.
+`docs/ops/deploy.md` §5's ecosystem gains `--max-old-space-size=768` and
+`MALLOC_ARENA_MAX=2` (not yet applied on the server). **Cluster mode was NOT
+switched on**: `revalidateTag` only clears the process that handled the save,
+so a second instance would serve stale pages after every admin edit until a
+shared Redis-backed cache handler coordinates tags (Next's self-hosting
+guide, "Multi-Instance Cache Coordination").
+
+**#2 Click delay.** The public root layout passed the whole catalog to
+`NextIntlClientProvider`; `admin` + `cms` were 180 KB of it. Filtered out
+through `ADMIN_MESSAGE_NAMESPACES`, the home page's RSC data falls from 493k
+to 311k characters. Zod (~370 KB raw, ~85 KB gzip) left every public page
+except `/support`, whose form validates with it: client components read
+constants and helpers from contracts modules that also build schemas at
+load, so one import kept all of Zod. Split into Zod-free `routes.ts`,
+`account-paths.ts`, `newsletter-honeypot.ts`, `promotion-rules.ts` and
+`captcha-names.ts`, re-exported from the barrel (no import site changed),
+and `contracts` + `utils` declare `"sideEffects": false`. Home JS: 1.55 MB →
+1.17 MB raw, 458 → 373 KB gzip. The "In practice" clip is `preload="none"`
+and plays only while near the viewport.
+
+**#4 Logs.** The cache-miss warning was the home Promotions band: its
+`getLivePromotions` entry is short-lived, so the final prerender pass dropped
+what the warming pass filled, on every ISR regeneration. The band now awaits
+`connection()` and is request-time by declaration. OAuth providers register
+only when both id and secret are set (`social-providers.ts`).
+
+**#5 CSP.** ADR-185: reCAPTCHA's `/recaptcha/` paths are allowed on every
+page, because a soft navigation keeps the first page's policy. The `eval`
+reports were Zod's JIT probe; `instrumentation-client.ts` sets `jitless` on
+Zod's global config without importing Zod (an import cost the bundle above).
+
+**#6 404s.** The proxy's pre-stream lookup fetched `/api/public-path` on the
+request's own origin, which behind nginx and Cloudflare left the box and failed
+every time, so every unknown address answered a soft 200. It now asks
+`http://localhost:$PORT`. Seeded `create`-only redirects: `/privacy` →
+`/legal/privacy`, `/terms` → `/legal/terms`, `/contact` → `/support`
+(`/about` → `/support` already existed). Not fixed: a missing record under a
+coded route (`/news/does-not-exist`) still renders not-found inside a 200,
+because its shell has already streamed.
+
+**#7.** The sitemap lists `/ar`, not `/ar/` (`publicPagePath`).
+
+**Tests.** New: `social-providers.test.ts` (3), `contracts-client-modules.test.ts`
+(10), `zod-global-config.test.ts` (2); `proxy.test.ts` +1 loopback regression
+and the reCAPTCHA block rewritten (65/65); `locale-serving.test.ts` +1;
+`home-opening.test.ts` +1. `@repo/contracts` 646/646, `@repo/auth` touched
+suites 18/18, `apps/web` 3439/3446. The 7 failures are not this change:
+`site-url.test.ts` (5) reads the local `.env`'s tunnel URL, and
+`changes-50-fixes` / `email-admin-conventions` cover files another session
+is editing. `tsc` clean on core/db/auth/settings/email/contracts; `next
+build` clean four times. Not done: anything on the server (ecosystem,
+nginx, Cloudflare, shell files) and a browser check.
+
+## 2026-10-05 — Module 09/14: Cloudflare stops rewriting admin addresses (changes-63 #8, #9)
+
+changes-63 repeats changes-62 and adds #8 and #9. The other items are the
+entry above; this one is #8 and #9 only.
+
+**#8 — hydration error #418 on /keystone/profile.** The admin layout's
+`<EmailOff>` markers bracket the SHELL only. Every admin route with a
+`loading.tsx` streams its body as a segment appended after the closing
+`<!--/email_off-->`, so Cloudflare's Email Address Obfuscation still rewrote
+the address on the profile page, the users table and every record page. React
+met markup it had not rendered and re-rendered the page in the browser. The
+sidebar's address sits in the shell and was always covered.
+
+**Fix.** `next.config.ts` sends `Cache-Control: private, no-cache, no-store,
+max-age=0, must-revalidate, no-transform` on `/keystone/:path*`. Cloudflare
+skips obfuscation (and every other HTML rewrite) for `no-transform`, wherever a
+segment lands. Next writes its own Cache-Control only when none is set, so the
+value is Next's dynamic-page value plus `no-transform`; the admin is always
+dynamic. A route handler's own header still wins. Cost: Cloudflare stops
+re-encoding admin HTML as brotli, so it arrives with Next's gzip. On the
+public side `/account` streams its learner body too, so the masthead's address
+and the email panel are wrapped in `EmailOff` inside the segment. Turning
+Scrape Shield off in Cloudflare (changes-62 #5) is still worth doing; this
+makes the admin independent of it.
+
+**#9 — "~56 preloaded but not used".** Not reproduced. Headless Chromium
+against production: 50 sitemap page loads at phone/desktop sizes, 50 more at
+125%/150% device scale, 19 soft navigations from the footer: 0 warnings, with
+3–4 preloads per page (two logos, the masthead image, one script), all used.
+A control page with an unused preload did log the warning, so the probe works.
+A local production build signed in as the seed admin: dashboard, profile and
+15 sidebar soft navigations, 0 warnings and no console errors. Nor is it a
+side effect of #8: with the obfuscation simulated (below), 0 warnings. Production
+sends no `Link` header or Speculation-Rules. No code changed; the next step
+needs the warning's resource URLs from the reporter's console.
+
+**Reproduced #8 locally.** Playwright signed in to a local production build
+and rewrote each admin document the way Cloudflare does (addresses outside
+`<script>` and outside `email_off` become `[email protected]` links, plus the
+decoder script). `/keystone/profile`, `/users`, `/employees` and `/newsletter`
+then threw `Minified React error #418; args[]=text`, the reported message;
+`/dashboard`, which prints no address in its body, did not. Without the
+rewrite, none did. The simulation cannot show Cloudflare honouring
+`no-transform`; that rests on Cloudflare's documentation.
+
+**Tests.** `app/changes-63.test.ts` (new, 3): the header value, no public path
+carries it, and the two account wrappers. With `locale-serving` and
+`seo-metadata`, 56/56. Verified on a local production build: `/keystone`
+answers with `no-transform`, `/` and `/support` keep their own values. `tsc`
+clean on web, ESLint and Prettier clean on touched files. Not run: the full
+web suite, and a check through Cloudflare itself.
+
+## 2026-10-05 — Module 14: no Link preload headers for Early Hints to replay (changes-64)
+
+changes-64 is the console output changes-63 #9 asked for: the URLs behind the
+"preloaded but not used" warnings.
+
+**Cause.** By default React writes a page's stylesheets, fonts and priority
+image into a `Link: rel=preload` response header. Cloudflare's Early Hints is on
+for this zone. It caches that header per URL and answers later requests with a
+`103` naming the same files. Measured on production: the first request to a URL
+returns the `Link` header, the second gets a `103` replaying it. The cached
+hints outlive a deploy. The reported files show it:
+
+- The admin pages preloaded `26ajws_evi9fo.css` and `0kux74d2qlaaf.css`, the
+  56822b5 build's pair.
+- `/keystone/users` preloaded `1brhwko9w3sbh.css` and `1mu2lddahhu02.css`. The
+  nginx log puts both in the in-place build that served until October 2, and
+  no release on disk holds them. That is the reported 404: nginx logged it at
+  15:51 UTC today, from `/keystone/promotions`.
+- The home page preloaded the cover of what had been the first hero slide
+  (`b82ecd5…`). The page now opens on a different article.
+
+None of this reproduced locally or in earlier probes because only Cloudflare
+replays the hints.
+
+**Fix.** `next.config.ts` sets `reactMaxHeadersLength: 0`, which leaves React
+no room to write any header. Nothing is lost: the same stylesheets head the
+HTML, which streams at once. `docs/ops/deploy.md` now covers Early Hints, with
+a check. Hints cached before this deploy may linger. Turning Early Hints off in
+Cloudflare (Speed → Optimization) clears them at once, and nothing here needs
+it.
+
+**Seen, not changed.** A missing `/_next/static/*` file still falls through to
+the public catch-all. That answers an HTML 404 with
+`max-age=14400, s-maxage=300`, which Cloudflare caches (`cf-cache-status:
+HIT`), and Next ISR-stores a page under
+`.next/server/app/_next/static/chunks/`. The nginx `location /_next/static/`
+block in deploy.md §6 is the documented fix; whether the live nginx has it was
+not checked.
+
+**Tests.** `app/changes-64.test.ts` (new, 1) pins the setting; with
+`changes-63.test.ts`, 4/4. A local production build with
+`NEXT_DEPLOYMENT_ID` set, run in Chrome and signed in as the seed admin
+(seven admin pages loaded directly, 18 sidebar navigations):
+
+- Before the change, every admin document sent `Link:` preloads for its two
+  stylesheets.
+- After it, none sent a `Link` header. `/`, `/news` and `/keystone` still
+  link both stylesheets in the head.
+- The 404 page still styles itself.
+
+Not done: a deploy, the Cloudflare setting, and a re-check of the reporter's
+console.

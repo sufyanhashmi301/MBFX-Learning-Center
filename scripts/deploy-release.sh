@@ -249,6 +249,17 @@ export NEXT_DEPLOYMENT_ID
 pnpm --filter web build
 echo "$SHA" > "$RELEASE/.deployment-id"
 
+# The optimised-image cache outlives a release (changes-62 #1). Kept inside
+# each release, every deploy started cold, and the first visitors after it
+# had sharp re-encode every picture on the site at once, the native memory
+# spike that pushed the process past pm2's limit. An upload's URL never
+# changes its bytes, so sharing it is safe; a replaced file under /public
+# keeps its old variant until Next's own TTL lapses (`minimumCacheTTL`).
+log "Linking the shared image cache"
+mkdir -p "$SHARED_DIR/next-image-cache" "$RELEASE/apps/web/.next/cache"
+rm -rf "$RELEASE/apps/web/.next/cache/images"
+ln -s "$SHARED_DIR/next-image-cache" "$RELEASE/apps/web/.next/cache/images"
+
 trap - ERR
 
 log "Switching $LIVE_LINK → $(basename "$RELEASE")"

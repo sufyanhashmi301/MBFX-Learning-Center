@@ -31,9 +31,16 @@
 //
 // With JS off the slide is that panel with its copy on it, which is a
 // complete and honest state rather than a broken one. And the 8.8 MB of
-// footage is still never on the critical path — `preload="metadata"` and a
-// play() that happens after hydration are what guaranteed that, not the
-// poster.
+// footage is still never on the critical path — `preload="none"` and a play()
+// that waits until the video nears the viewport are what guarantee that, not
+// the poster.
+//
+// **It loads when it is about to be SEEN (changes-62 #2).** The one call site
+// left is the "In practice" band, far below the fold, and an unconditional
+// play() after hydration fetched its whole clip (940 KB) on every home page
+// view, competing with the page's own scripts. Now `preload="none"` fetches
+// nothing up front, an IntersectionObserver starts playback as the band
+// approaches the viewport, and the clip pauses again once it has left it.
 //
 // Decorative: the footage carries no information the copy beside it does not,
 // and it has no audio track to caption. `aria-hidden` keeps it out of the
@@ -51,12 +58,26 @@ function HeroVideo({ src, className }: { src: string; className?: string }) {
     if (!el) return;
     if (!window.matchMedia("(prefers-reduced-motion: no-preference)").matches) return;
 
-    // `play()` rejects rather than throws when a browser refuses autoplay —
-    // a data-saver mode, a battery-saver mode, or a policy this page cannot
-    // see. That is a legitimate outcome, not an error: the band stays on its
-    // solid fill, and an unhandled rejection in the console would be the only
-    // damage.
-    void el.play().catch(() => {});
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return;
+        if (entry.isIntersecting) {
+          // `play()` rejects rather than throws when a browser refuses
+          // autoplay — a data-saver mode, a battery-saver mode, or a policy
+          // this page cannot see. That is a legitimate outcome, not an error:
+          // the band stays on its still, and an unhandled rejection in the
+          // console would be the only damage.
+          void el.play().catch(() => {});
+        } else {
+          el.pause();
+        }
+      },
+      // Start a little before it scrolls in, so the first frames are there
+      // when it arrives.
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   return (
@@ -69,7 +90,7 @@ function HeroVideo({ src, className }: { src: string; className?: string }) {
       muted
       loop
       playsInline
-      preload="metadata"
+      preload="none"
       aria-hidden
       tabIndex={-1}
       className={cn("size-full object-cover", className)}

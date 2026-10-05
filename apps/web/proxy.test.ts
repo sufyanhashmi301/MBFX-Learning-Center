@@ -312,6 +312,21 @@ describe("proxy — real 404s on the public surface (changes-49, ADR-146)", () =
     expect(asked.searchParams.get("path")).toBe("/nothing-here");
   });
 
+  // changes-62 #6: behind nginx + Cloudflare the request's own origin is the
+  // public one, the lookup left the box and failed, and every unknown address
+  // answered a soft 200.
+  it("asks this process over loopback when PORT is set, never the public origin", async () => {
+    vi.stubEnv("PORT", "3003");
+    try {
+      lookup.mockResolvedValueOnce({ kind: "not-found" });
+      await proxy(new NextRequest("https://learn.example.com/nothing-here"));
+      const asked = new URL(String(fetchMock.mock.calls.at(-1)![0]));
+      expect(asked.origin).toBe("http://localhost:3003");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("a stored redirect is a real 308 to a same-site path", async () => {
     lookup.mockResolvedValueOnce({ kind: "redirect", to: "/support" });
     const response = await proxy(requestFor("/about/support"));
@@ -387,35 +402,34 @@ describe("proxy matcher — /admin, /keystone and /api excluded from next-intl's
   });
 });
 
-describe("proxy — Google reCAPTCHA origins in the CSP (ADR-156)", () => {
+describe("proxy — Google reCAPTCHA origins in the CSP (ADR-185)", () => {
   // A session cookie gets a staff path past the gate to its headers.
   const cspOf = async (path: string) =>
     (await proxy(requestFor(path, "better-auth.session_token=a-real-session-token"))).headers.get(
       "Content-Security-Policy",
     ) ?? "";
 
+  // changes-62 #5: a soft navigation keeps the FIRST page's policy, so the
+  // home page must already allow the sign-in form's captcha.
   it.each([
-    "/keystone",
-    "/keystone/settings/general",
+    "/",
+    "/news",
     "/sign-in",
-    "/sign-up",
     "/support",
     "/ar/sign-in",
-  ])(
-    "%s — a page with a reCAPTCHA form — allows Google's script and scoring frame",
-    async (path) => {
-      const csp = await cspOf(path);
-      expect(csp).toMatch(/script-src [^;]*https:\/\/www\.gstatic\.com\/recaptcha\//);
-      expect(csp).toMatch(/frame-src [^;]*https:\/\/www\.google\.com\/recaptcha\//);
-      // Regression (2026-09-24): its api2/clr request is a fetch from the page.
-      expect(csp).toMatch(/connect-src [^;]*https:\/\/www\.google\.com\/recaptcha\//);
-    },
-  );
+    "/keystone",
+    "/keystone/settings/seo",
+    "/keystone/forgot-password",
+  ])("%s allows Google's script, scoring frame and clr fetch", async (path) => {
+    const csp = await cspOf(path);
+    expect(csp).toMatch(/script-src [^;]*https:\/\/www\.gstatic\.com\/recaptcha\//);
+    expect(csp).toMatch(/frame-src [^;]*https:\/\/www\.google\.com\/recaptcha\//);
+    // Regression (2026-09-24): its api2/clr request is a fetch from the page.
+    expect(csp).toMatch(/connect-src [^;]*https:\/\/www\.google\.com\/recaptcha\//);
+  });
 
-  it.each(["/", "/news", "/sign-in/extra", "/keystone/settings/seo", "/keystone/forgot-password"])(
-    "%s allows no Google origin",
-    async (path) => {
-      expect(await cspOf(path)).not.toContain("google.com/recaptcha");
-    },
-  );
+  it("still allows no other Google origin", async () => {
+    const csp = await cspOf("/");
+    expect(csp).not.toMatch(/https:\/\/www\.google\.com\/(?!recaptcha\/)/);
+  });
 });

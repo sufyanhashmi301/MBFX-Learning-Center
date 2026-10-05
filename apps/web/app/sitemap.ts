@@ -143,13 +143,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       Boolean(legalStored[index]?.startsWith(STORED_UPLOAD_PREFIX)),
     ).map((key) => `/legal/${key}`),
   ];
-  const staticPages: MetadataRoute.Sitemap = servableLocales.flatMap((locale) => {
-    const prefix = locale === routing.defaultLocale ? "" : `/${locale}`;
-    return staticPaths.map((path) => ({
-      url: `${base}${prefix}${path}`,
+  // `publicPagePath`, not a bare prefix: the Arabic home is `/ar`, and
+  // `/ar` + `/` listed `/ar/`, which answers a 308 (changes-62 #7).
+  const staticPages: MetadataRoute.Sitemap = servableLocales.flatMap((locale) =>
+    staticPaths.map((path) => ({
+      url: `${base}${publicPagePath(locale, routing.defaultLocale, path)}`,
       lastModified: new Date(),
-    }));
-  });
+    })),
+  );
 
   const glossaryPages: MetadataRoute.Sitemap = (flags.glossary ? served(glossaryEntries) : []).map(
     (entry) => ({

@@ -4,7 +4,7 @@
 // Internal links are never free text: an internal-looking path typed as a
 // `URL` is refused here, at the schema, not caught later by a linter.
 import { z } from "zod";
-import { isRouteKey } from "../navigation.ts";
+import { isRouteKey } from "../routes.ts";
 
 const ABSOLUTE_URL_PATTERN = /^(https?:)\/\//i;
 const SPECIAL_SCHEME_PATTERN = /^(mailto|tel):/i;

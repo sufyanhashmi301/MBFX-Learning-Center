@@ -14,7 +14,7 @@ import {
   profileCompleteness,
   twoFactorCodeSchema,
   twoFactorPasswordSchema,
-} from "./account.ts";
+} from "./index.ts";
 import { updateOwnProfileSchema } from "./admin.ts";
 
 describe("articleReadSchema", () => {

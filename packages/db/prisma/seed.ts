@@ -2165,6 +2165,12 @@ export async function seed(db: PrismaClient) {
   // same change: `resolvePublicPage` returns not-found for a reserved segment
   // BEFORE it looks at this table.
   //
+  // The last three are the addresses people TYPE (changes-62 #6): a
+  // reader, or a crawler guessing at a company site, tries `/privacy` and
+  // `/terms` before `/legal/privacy`, and `/contact` before `/support`. The
+  // legal pages answer 404 by themselves while no document is chosen, so a
+  // redirect never invents a page that is not there.
+  //
   // `create`-only per row: an admin who has since repointed one of these
   // keeps their version.
   const WITHDRAWN_ROUTES: [string, string][] = [
@@ -2174,6 +2180,9 @@ export async function seed(db: PrismaClient) {
     ["/about/transparency", "/support"],
     ["/about/security", "/support"],
     ["/markets", "/tools"],
+    ["/privacy", "/legal/privacy"],
+    ["/terms", "/legal/terms"],
+    ["/contact", "/support"],
   ];
   let seededRedirects = 0;
   for (const [fromPath, toPath] of WITHDRAWN_ROUTES) {

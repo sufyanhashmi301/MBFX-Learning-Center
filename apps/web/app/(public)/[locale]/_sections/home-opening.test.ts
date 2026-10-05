@@ -132,14 +132,24 @@ describe("footage is never on the critical path", () => {
   // asserted below: the 8.8 MB is still never on the critical path, and that
   // was always `preload="metadata"` plus a post-hydration `play()`, never the
   // poster.
-  it("fetches only the footage's metadata, and never a poster image", () => {
+  // changes-62 #2: `preload="metadata"` plus an unconditional play() still
+  // downloaded the whole clip on every home page view. Now nothing is fetched
+  // until the band nears the viewport.
+  it("fetches nothing up front, and never a poster image", () => {
     const src = code(VIDEO);
-    expect(src).toContain('preload="metadata"');
+    expect(src).toContain('preload="none"');
     expect(src).not.toContain('preload="auto"');
+    expect(src).not.toContain('preload="metadata"');
     // The inverse of the assertion this replaces, and it is here for the
     // revert: `poster` is the obvious thing to reach for the next time
     // somebody looks at a dark band and wants an image in it.
     expect(src).not.toContain("poster");
+  });
+
+  it("plays only while it is near the viewport", () => {
+    const src = code(VIDEO);
+    expect(src).toContain("new IntersectionObserver(");
+    expect(src).toMatch(/isIntersecting[\s\S]*?play\(\)[\s\S]*?pause\(\)/);
   });
 
   it("has no autoPlay attribute", () => {

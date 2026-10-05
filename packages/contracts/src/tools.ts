@@ -12,7 +12,7 @@
 // directions when it drifts from `ROUTE_PATHS`.
 import { z } from "zod";
 
-import { ROUTE_PATHS, type RouteKey } from "./navigation.ts";
+import { ROUTE_PATHS, type RouteKey } from "./routes.ts";
 
 // ─── The tools (ADR-086 #1; eleven since ADR-135) ─────────────
 

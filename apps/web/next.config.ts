@@ -12,6 +12,8 @@ import createNextIntlPlugin from "next-intl/plugin";
 // without this silently ran with Better Auth's insecure default secret.
 config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 
+const ADMIN_CACHE_CONTROL = "private, no-cache, no-store, max-age=0, must-revalidate, no-transform";
+
 // Next 16 auto-optimizes lucide-react and other known packages, and
 // Turbopack is the default bundler — no optimizePackageImports or
 // webpack-specific config needed (see docs/memory/decisions).
@@ -19,6 +21,43 @@ const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js` (changes-49): it tells a scanner which
   // framework — and so which advisories — to try, and tells a reader nothing.
   poweredByHeader: false,
+  // No `Link: rel=preload` response headers from React (changes-64). By
+  // default React lists a page's stylesheets, fonts and priority image in a
+  // `Link` header, and Cloudflare's Early Hints caches that header per URL
+  // and replays it as a `103` on every later request. The cached hints
+  // outlive a deploy, so browsers preloaded the previous build's
+  // stylesheets: "preloaded but not used" on every admin page, and a 404 for
+  // a file only an October 1 build had. The home hint named yesterday's first
+  // hero slide. The same resources are already at the top of the HTML head,
+  // which streams at once, so the headers saved almost nothing. 0 leaves
+  // React no room to write any.
+  reactMaxHeadersLength: 0,
+  // The admin's own Cache-Control, plus `no-transform` (changes-63 #8).
+  //
+  // Cloudflare's Email Address Obfuscation rewrites every address in the HTML
+  // into markup React did not render. React then hits a text mismatch while
+  // hydrating (minified error #418) and re-renders the page in the browser.
+  // The admin layout's `<EmailOff>` markers only bracket the SHELL: every
+  // route with a `loading.tsx` streams its body as a segment appended AFTER
+  // the closing marker, so the address on /keystone/profile, the users table
+  // and every record page was still rewritten. Cloudflare skips obfuscation
+  // (and every other HTML rewrite) for `no-transform`, which covers every
+  // segment wherever it lands.
+  //
+  // Next writes its own Cache-Control only when none is set yet
+  // (`sendRenderResult`), so this value replaces it whole. It is the value
+  // Next sends for a dynamic page, and the admin is always dynamic (ADR-006).
+  // A route handler that sets its own still wins. The cost: Cloudflare no
+  // longer re-encodes these responses as brotli, so admin HTML arrives with
+  // Next's gzip.
+  async headers() {
+    return [
+      {
+        source: "/keystone/:path*",
+        headers: [{ key: "Cache-Control", value: ADMIN_CACHE_CONTROL }],
+      },
+    ];
+  },
   // Normally `.next`. The E2E harness sets it to something else so its own
   // server can run while `pnpm dev` is up: Next 16 takes a dev lock at
   // `<distDir>/lock` and REFUSES to start a second dev server sharing it

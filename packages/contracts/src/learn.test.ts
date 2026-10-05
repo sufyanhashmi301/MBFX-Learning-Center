@@ -26,7 +26,7 @@ import {
   LEARN_TRACK_SURFACES,
   ROUTE_PATHS,
   type RouteKey,
-} from "./navigation.ts";
+} from "./index.ts";
 
 // ─── Tracks (ADR-055 #2) ─────────────────────────────────────
 
