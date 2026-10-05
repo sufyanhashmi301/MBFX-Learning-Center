@@ -648,6 +648,31 @@ export async function getLivePromotions(
   return loadLivePromotions(locale, new Date(), { unavailableTargetTypes });
 }
 
+/**
+ * The home band's read (ADR-187, changes-65). Same rows as
+ * `getLivePromotions`, with a lifetime long enough to stay IN the prerender:
+ * an `expire` of five minutes is not "under five minutes", so the home page
+ * is prerendered whole and can be cached at the edge. Before this, the band
+ * was the home page's one dynamic hole, and that hole made every `/` response
+ * `private, no-store`.
+ *
+ * The cost is a clock-driven change that lands late: the page revalidates
+ * every 60 seconds, so a promotion appears (or disappears) up to about a
+ * minute after `startsAt`/`endsAt`, plus the edge's own `s-maxage`. An admin
+ * save still shows at once through the `content` tag. The popup, the bars and
+ * the counters keep `getLivePromotions`, whose two-minute lifetime is right
+ * for an endpoint.
+ */
+export async function getLivePromotionsForBand(
+  locale: string,
+  unavailableTargetTypes: readonly PromotionTargetTypeInput[] = [],
+): Promise<PublicPromotion[]> {
+  "use cache";
+  cacheTag("content");
+  cacheLife({ stale: 60, revalidate: 60, expire: 300 });
+  return loadLivePromotions(locale, new Date(), { unavailableTargetTypes });
+}
+
 // ─── Admin reads ─────────────────────────────────────────────
 
 export type PromotionLocaleState = TranslationStatus | "MISSING";

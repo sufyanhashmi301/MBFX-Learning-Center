@@ -2,7 +2,10 @@
 // `requirePermission("translations.provider.manage")` and parsed the input
 // with the `@repo/contracts` schema; this is the service behind it.
 //
-// Three properties, the reCAPTCHA tab's (ADR-156) applied to a new key:
+// Three properties, the reCAPTCHA tab's (ADR-156) applied to a new key. A
+// fourth comes from ADR-186: the stored key belongs to the provider the row
+// names, so changing the provider needs a new key in the same save.
+//
 //
 //   1. **The key is write-only.** The view says whether one is saved, never
 //      what it is, and a blank field keeps the saved one.
@@ -13,6 +16,7 @@
 //      changed (security.md #5).
 import { db } from "@repo/db";
 import type {
+  TranslateProviderKindName,
   TranslateReason,
   TranslateSettingsSaveInput,
   TranslateTestInput,
@@ -30,6 +34,8 @@ const TEST_TARGET = "es";
 
 export interface TranslateSettingsView {
   enabled: boolean;
+  /** The provider the saved key belongs to (ADR-186). */
+  kind: TranslateProviderKindName;
   hasApiKey: boolean;
   pricePerMillionChars: number;
   monthlyCharBudget: number | null;
@@ -49,6 +55,7 @@ export async function loadTranslateSettings(
       // Deliberately not the cipher: `hasStoredKey()` asks the database.
       select: {
         enabled: true,
+        kind: true,
         pricePerMillionChars: true,
         monthlyCharBudget: true,
         lastTestedAt: true,
@@ -59,6 +66,7 @@ export async function loadTranslateSettings(
   ]);
   return {
     enabled: row?.enabled ?? false,
+    kind: row?.kind ?? "GOOGLE",
     hasApiKey: await hasStoredKey(),
     pricePerMillionChars: row ? Number(row.pricePerMillionChars) : 20,
     monthlyCharBudget: row?.monthlyCharBudget ?? null,
@@ -73,7 +81,10 @@ export async function loadTranslateSettings(
 export type TranslateSettingsRefusal =
   /** TRANSLATE_SECRET_KEY is not set, so a key cannot be stored. */
   | "sealKeyMissing"
-  /** Switching on, or testing, with no key typed or saved. */
+  /**
+   * Switching on, or testing, with no key typed or saved, or with only a key
+   * saved for the OTHER provider (ADR-186 #1).
+   */
   | "keyRequired"
   /** The test translation failed; the reason says how. */
   | TranslateReason;
@@ -87,12 +98,13 @@ export type TranslateSettingsResult =
  */
 async function runTest(
   actorId: string,
+  kind: TranslateProviderKindName,
   apiKey: string | undefined,
 ): Promise<"ok" | TranslateReason> {
   const started = Date.now();
   let price = 20;
   try {
-    const { driver, config } = await loadTranslateDriver({ includeDisabled: true, apiKey });
+    const { driver, config } = await loadTranslateDriver({ includeDisabled: true, apiKey, kind });
     price = config.pricePerMillionChars;
     const [answer] = await driver.translate({
       segments: [TEST_SAMPLE],
@@ -104,6 +116,7 @@ async function runTest(
     await recordUsage({
       status: ok ? "OK" : "FAILED",
       reason: ok ? null : "network_error",
+      provider: kind,
       sourceLocale: TEST_SOURCE,
       targetLocale: TEST_TARGET,
       format: "TEXT",
@@ -118,9 +131,11 @@ async function runTest(
     return ok ? "ok" : "network_error";
   } catch (error) {
     const reason = reasonOf(error);
+    const refused = reason === "not_configured" || reason === "seal_unavailable";
     await recordUsage({
-      status: reason === "not_configured" || reason === "seal_unavailable" ? "REFUSED" : "FAILED",
+      status: refused ? "REFUSED" : "FAILED",
       reason,
+      provider: refused ? null : kind,
       sourceLocale: TEST_SOURCE,
       targetLocale: TEST_TARGET,
       format: "TEXT",
@@ -136,10 +151,11 @@ async function runTest(
   }
 }
 
-async function hasStoredKey(): Promise<boolean> {
+/** A key is saved: for `kind` when given, for whichever provider otherwise. */
+async function hasStoredKey(kind?: TranslateProviderKindName): Promise<boolean> {
   return (
     (await db.translateProvider.count({
-      where: { id: PROVIDER_ID, apiKeyCipher: { not: null } },
+      where: { id: PROVIDER_ID, apiKeyCipher: { not: null }, ...(kind ? { kind } : {}) },
     })) > 0
   );
 }
@@ -150,9 +166,9 @@ export async function testTranslateConnection(
   input: TranslateTestInput,
 ): Promise<TranslateSettingsResult> {
   const typed = input.apiKey?.trim() || undefined;
-  if (!typed && !(await hasStoredKey())) return { ok: false, reason: "keyRequired" };
+  if (!typed && !(await hasStoredKey(input.kind))) return { ok: false, reason: "keyRequired" };
 
-  const result = await runTest(actorId, typed);
+  const result = await runTest(actorId, input.kind, typed);
   const testedAt = new Date();
   await db.translateProvider.upsert({
     where: { id: PROVIDER_ID },
@@ -169,7 +185,7 @@ export async function testTranslateConnection(
       action: "settings.translate.test",
       entityType: "TranslateProvider",
       entityId: PROVIDER_ID,
-      changes: { result, typedKey: Boolean(typed) },
+      changes: { result, kind: input.kind, typedKey: Boolean(typed) },
     },
   });
   return result === "ok" ? { ok: true } : { ok: false, reason: result };
@@ -186,6 +202,7 @@ export async function saveTranslateSettings(
     where: { id: PROVIDER_ID },
     select: {
       enabled: true,
+      kind: true,
       pricePerMillionChars: true,
       monthlyCharBudget: true,
       lastTestedAt: true,
@@ -193,11 +210,16 @@ export async function saveTranslateSettings(
     },
   });
 
+  // The saved key belongs to the saved provider: a switch carries a new key
+  // or does not happen (ADR-186 #1), whether or not translation is on.
+  const kindChanged = (before?.kind ?? "GOOGLE") !== input.kind;
+  if (kindChanged && !typed) return { ok: false, reason: "keyRequired" };
+
   let lastTestedAt = before?.lastTestedAt ?? null;
   let lastTestResult = before?.lastTestResult ?? null;
   if (input.enabled) {
-    if (!typed && !(await hasStoredKey())) return { ok: false, reason: "keyRequired" };
-    const result = await runTest(actorId, typed);
+    if (!typed && !(await hasStoredKey(input.kind))) return { ok: false, reason: "keyRequired" };
+    const result = await runTest(actorId, input.kind, typed);
     if (result !== "ok") return { ok: false, reason: result };
     lastTestedAt = new Date();
     lastTestResult = "ok";
@@ -209,6 +231,7 @@ export async function saveTranslateSettings(
 
   const data = {
     enabled: input.enabled,
+    kind: input.kind,
     pricePerMillionChars: input.pricePerMillionChars.toFixed(6),
     monthlyCharBudget: input.monthlyCharBudget,
     lastTestedAt,
@@ -233,12 +256,14 @@ export async function saveTranslateSettings(
         before: before
           ? {
               enabled: before.enabled,
+              kind: before.kind,
               pricePerMillionChars: Number(before.pricePerMillionChars),
               monthlyCharBudget: before.monthlyCharBudget,
             }
           : null,
         after: {
           enabled: input.enabled,
+          kind: input.kind,
           pricePerMillionChars: input.pricePerMillionChars,
           monthlyCharBudget: input.monthlyCharBudget,
         },
@@ -250,15 +275,21 @@ export async function saveTranslateSettings(
 }
 
 /**
- * Whether automatic translation can run: switched on with a key saved. No
- * permission and no secret — it is what decides whether an editor DRAWS the
- * "Translate with Google" button (absent, not disabled, as ADR-097's AI
- * affordances are). The action behind the button checks everything again.
+ * The provider automatic translation runs on, or null when it cannot run
+ * (switched off, or no key saved). No permission and no secret — it decides
+ * whether an editor DRAWS the "Translate with …" button and what the button
+ * names (absent, not disabled, as ADR-097's AI affordances are). The action
+ * behind the button checks everything again.
  */
+export async function getAutoTranslateProvider(): Promise<TranslateProviderKindName | null> {
+  const row = await db.translateProvider.findFirst({
+    where: { id: PROVIDER_ID, enabled: true, apiKeyCipher: { not: null } },
+    select: { kind: true },
+  });
+  return row?.kind ?? null;
+}
+
+/** Whether automatic translation can run: `getAutoTranslateProvider()` as a yes or no. */
 export async function isAutoTranslateAvailable(): Promise<boolean> {
-  return (
-    (await db.translateProvider.count({
-      where: { id: PROVIDER_ID, enabled: true, apiKeyCipher: { not: null } },
-    })) > 0
-  );
+  return (await getAutoTranslateProvider()) !== null;
 }

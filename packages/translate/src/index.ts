@@ -1,8 +1,8 @@
 // @repo/translate — automatic translation through Google Cloud Translation
-// Basic (v2) (ADR-160, ADR-161, ADR-162).
+// Basic (v2) or DeepL (ADR-160, ADR-161, ADR-162, ADR-186).
 //
 // **One door.** `translateSegments` (and the two shapes over it,
-// `translateTexts` and `translateHtml`) is the only way to reach Google, and
+// `translateTexts` and `translateHtml`) is the only way to reach the provider, and
 // it meters every outcome. The driver and `loadTranslateDriver` are NOT
 // exported: `index.test.ts` pins this surface, so a later export that hands a
 // caller a second way in fails the suite.
@@ -41,6 +41,7 @@ export {
   loadTranslateSettings,
   saveTranslateSettings,
   testTranslateConnection,
+  getAutoTranslateProvider,
   isAutoTranslateAvailable,
   TEST_SAMPLE,
   type TranslateSettingsRefusal,

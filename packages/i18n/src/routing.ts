@@ -60,6 +60,20 @@ export const SUPPORTED_LOCALES = [
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
+/**
+ * The languages an admin may ADD (ADR-188): the owner's set, English,
+ * Arabic, Urdu, Hindi and Chinese (Simplified). Every other registry code
+ * stays routable, so an inactive one still answers a clean 404, but cannot
+ * be created in Settings → Translation → Languages, and `createLocale`
+ * refuses it. A sixth language is a line here.
+ */
+export const OFFERED_LOCALE_CODES = ["en", "ar", "ur", "hi", "zh"] as const;
+
+/** Whether an admin may add this language (ADR-188). */
+export function isOfferedLocale(code: string): boolean {
+  return (OFFERED_LOCALE_CODES as readonly string[]).includes(code);
+}
+
 export const routing = defineRouting({
   locales: SUPPORTED_LOCALES.map((locale) => locale.code),
   defaultLocale: "en",

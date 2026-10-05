@@ -18,6 +18,8 @@ import { useEffect, useState } from "react";
 
 import type { QuizProgressSummary, QuizProgressView } from "@repo/contracts";
 
+import { usePublicSession } from "../../_components/public-session.tsx";
+
 /**
  * The same five-state union `ProgressStatus` uses, and the states mean the
  * same things — `guest` is a 401, `off` is a flag the reader cannot see
@@ -37,7 +39,17 @@ export function useQuizResults(): {
   const [status, setStatus] = useState<QuizResultsStatus>("loading");
   const [byQuizId, setByQuizId] = useState<Map<string, QuizProgressSummary>>(() => new Map());
 
+  // changes-65: ask only for a signed-in learner, once the session is known.
+  // A guest's request could only answer 401, which the browser logs as a
+  // console error for every signed-out visitor. The shelf draws the same
+  // pass-mark meter for `guest` and `off`, so a guest loses nothing.
+  const session = usePublicSession();
+  const signedIn = session.status === "learner";
+  const settled = session.status !== "loading";
+
   useEffect(() => {
+    // A guest is answered below, at render: nothing to ask the server.
+    if (!settled || !signedIn) return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -55,7 +67,8 @@ export function useQuizResults(): {
       }
     })();
     return () => controller.abort();
-  }, []);
+  }, [settled, signedIn]);
 
+  if (settled && !signedIn) return { status: "guest", byQuizId };
   return { status, byQuizId };
 }

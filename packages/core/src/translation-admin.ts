@@ -7,7 +7,7 @@
 // request — the queue does the work (ADR-162 #7).
 import { db } from "@repo/db";
 import { invalidateActiveLocales, publicCatalogGaps } from "@repo/i18n";
-import { SUPPORTED_LOCALES } from "@repo/i18n/routing";
+import { isOfferedLocale, SUPPORTED_LOCALES } from "@repo/i18n/routing";
 import {
   countJobs,
   enqueueLocaleBackfill,
@@ -306,7 +306,10 @@ export async function loadLanguagesView(): Promise<LanguagesView> {
         },
       };
     }),
-    available: SUPPORTED_LOCALES.filter((locale) => !existing.has(locale.code)).map((locale) => ({
+    // Only the languages the owner offers (ADR-188), minus those already added.
+    available: SUPPORTED_LOCALES.filter(
+      (locale) => isOfferedLocale(locale.code) && !existing.has(locale.code),
+    ).map((locale) => ({
       code: locale.code,
       name: locale.name,
       nativeName: locale.nativeName,

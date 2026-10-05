@@ -1,15 +1,16 @@
-// **The one door** to Google (ADR-160). `translateSegments` is the only
-// export that reaches the provider, and it meters every outcome — a request,
-// a failure, a refusal — so a caller cannot forget to log. `translateTexts`
-// and `translateHtml` are shapes over it, never around it.
+// **The one door** to the translation provider (ADR-160, ADR-186).
+// `translateSegments` is the only export that reaches the provider, and it
+// meters every outcome — a request, a failure, a refusal — so a caller cannot
+// forget to log. `translateTexts` and `translateHtml` are shapes over it,
+// never around it.
 //
 // Nothing here writes content anywhere. It returns strings; whoever asked
 // decides what to save, under its own permission check and schema.
-import type { TranslateReason } from "@repo/contracts";
+import type { TranslateProviderKindName, TranslateReason } from "@repo/contracts";
 
 import { planBatches, splitHtml } from "./batch.ts";
 import { TranslateError, isTransient, reasonOf } from "./errors.ts";
-import type { TranslateWireFormat } from "./google.ts";
+import type { TranslateWireFormat } from "./driver.ts";
 import { stripKeepWrappers, substituteGlossary, type GlossaryPair } from "./html.ts";
 import { loadTranslateDriver, type LoadedProvider } from "./provider.ts";
 import { getPeriodUsage, recordUsage, type UsageFormat } from "./usage.ts";
@@ -43,10 +44,12 @@ async function refuse(
   options: TranslateOptions,
   price: number,
   message: string,
+  provider: TranslateProviderKindName | null = null,
 ): Promise<never> {
   await recordUsage({
     status: "REFUSED",
     reason,
+    provider,
     sourceLocale: options.source,
     targetLocale: options.target,
     format: usageFormat(format),
@@ -98,12 +101,16 @@ export async function translateSegments(
         options,
         config.pricePerMillionChars,
         "The monthly translation budget is reached",
+        config.kind,
       );
     }
   }
 
   const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-  const batches = planBatches(toSend.map(({ segment }) => segment));
+  const batches = planBatches(
+    toSend.map(({ segment }) => segment),
+    driver.limits,
+  );
 
   for (const batch of batches) {
     const batchSegments = batch.map((i) => toSend[i]!.segment);
@@ -118,6 +125,7 @@ export async function translateSegments(
         );
         await recordUsage({
           status: "OK",
+          provider: config.kind,
           sourceLocale: options.source,
           targetLocale: options.target,
           format: usageFormat(format),
@@ -143,6 +151,7 @@ export async function translateSegments(
         await recordUsage({
           status: "FAILED",
           reason: reasonOf(error),
+          provider: config.kind,
           sourceLocale: options.source,
           targetLocale: options.target,
           format: usageFormat(format),

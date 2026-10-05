@@ -5,7 +5,7 @@ import { getPromotion, getPromotionStats } from "@repo/core";
 import { getActiveLocales } from "@repo/i18n";
 import { routing } from "@repo/i18n/routing";
 import { can, requirePermission } from "@repo/rbac";
-import { isAutoTranslateAvailable } from "@repo/translate";
+import { getAutoTranslateProvider } from "@repo/translate";
 import { EditorPage } from "../../_components/admin-page.tsx";
 import { loadEditorAi } from "../../_lib/editor-ai.ts";
 import { PromotionEditor } from "../_components/promotion-editor.tsx";
@@ -24,7 +24,7 @@ export default async function PromotionEditPage({
   const subject = await requirePermission("promotions.view");
   const { id } = await params;
   const canUpdate = can(subject, "promotions.update");
-  const [t, detail, stats, activeLocales, ai, autoTranslate] = await Promise.all([
+  const [t, detail, stats, activeLocales, ai, translateProvider] = await Promise.all([
     getTranslations("admin"),
     getPromotion(id),
     // ADR-170: approximate views, clicks and dismissals, read under the same key.
@@ -37,7 +37,7 @@ export default async function PromotionEditPage({
       entity: { type: "promotion", id },
       contentKeys: ["promotions.update"],
     }),
-    isAutoTranslateAvailable(),
+    getAutoTranslateProvider(),
   ]);
   if (!detail || detail.deletedAt) notFound();
 
@@ -55,20 +55,22 @@ export default async function PromotionEditPage({
   const initialLocale =
     typeof requested === "string" && locales.includes(requested) ? requested : defaultLocale;
 
-  // ADR-160: "Translate with Google" — present only when automatic
-  // translation is on AND the viewer can save the words (the prefill action
-  // refuses anyone else, so a viewer would get a button that always fails).
+  // ADR-160/186: "Translate with Google" or "… with DeepL" — present only
+  // when automatic translation is on AND the viewer can save the words (the
+  // prefill action refuses anyone else, so a viewer would get a button that
+  // always fails). The prop keeps its ADR-160 name.
+  const providerName = translateProvider ? t(`translate.providerNames.${translateProvider}`) : "";
   const google =
-    canUpdate && autoTranslate
+    canUpdate && translateProvider !== null
       ? {
           labels: {
-            action: t("translate.editor.action", { source: defaultLocale }),
+            action: t("translate.editor.action", { source: defaultLocale, provider: providerName }),
             confirmTitle: t("translate.editor.confirmTitle"),
             confirmDescription: t("translate.editor.confirmDescription"),
             confirm: t("translate.editor.confirm"),
             cancel: t("cancel"),
             working: t("translate.editor.working"),
-            done: t("translate.editor.done"),
+            done: t("translate.editor.done", { provider: providerName }),
             failed: t("translate.editor.failed"),
             reasons: Object.fromEntries(
               TRANSLATE_REASONS.map((reason) => [reason, t(`translate.reasons.${reason}`)]),

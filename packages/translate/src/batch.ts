@@ -1,5 +1,6 @@
 // Grouping segments into requests, and splitting a long HTML body into
-// segments. Pure; the limits are Google's, stated once.
+// segments. Pure. The constants are Google's limits; each driver passes its
+// own (ADR-186 #3), and the piece size below suits both providers.
 //
 // The Basic (v2) limits are confirmed by the Phase 1 spike against the real
 // endpoint (plan §6). Until then these are the conservative values: 128

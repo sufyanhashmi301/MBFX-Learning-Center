@@ -1,4 +1,4 @@
-// A fake Google Cloud Translation Basic (v2) endpoint, for tests (MSW —
+// Fake Google Cloud Translation Basic (v2) and DeepL endpoints, for tests (MSW —
 // testing.md reserves mocks for the network edge, and this IS that edge).
 //
 // Exported as `@repo/translate/testing` so a later suite in `@repo/core` (the
@@ -10,9 +10,10 @@
 // can see which language a string went to and that markup survived.
 import { http, HttpResponse } from "msw";
 
+import { DEEPL_FREE_ENDPOINT, DEEPL_PRO_ENDPOINT } from "./deepl.ts";
 import { GOOGLE_TRANSLATE_ENDPOINT } from "./google.ts";
 
-export { GOOGLE_TRANSLATE_ENDPOINT };
+export { DEEPL_FREE_ENDPOINT, DEEPL_PRO_ENDPOINT, GOOGLE_TRANSLATE_ENDPOINT };
 
 export interface FakeGoogleCall {
   url: string;
@@ -75,4 +76,52 @@ export function fakeGoogleTranslate(options: FakeGoogleOptions = {}) {
     });
   });
   return { handler, calls };
+}
+
+export interface FakeDeeplCall {
+  url: string;
+  authorization: string | null;
+  body: { text: string[]; source_lang?: string; target_lang: string; tag_handling?: string };
+}
+
+export interface FakeDeeplOptions {
+  /** Only this key is accepted; anything else is answered 403, as DeepL does. */
+  validKey?: string;
+  /** Answer the Nth call (0-based) with this HTTP status instead. */
+  failures?: Record<number, number>;
+  /** Replace the default "[TARGET_LANG] text" translation. */
+  translate?: (text: string, targetLang: string, tagHandling: string | undefined) => string;
+}
+
+/**
+ * A fake DeepL API (ADR-186), answering on BOTH hosts so a test sees which
+ * one the key chose. Translates by prefixing DeepL's own target code
+ * (`[ES] `, `[PT-BR] `), so a test can also see the code mapping.
+ */
+export function fakeDeepl(options: FakeDeeplOptions = {}) {
+  const calls: FakeDeeplCall[] = [];
+  const respond = async ({ request }: { request: Request }) => {
+    const index = calls.length;
+    const body = (await request.json()) as FakeDeeplCall["body"];
+    const authorization = request.headers.get("authorization");
+    calls.push({ url: request.url, authorization, body });
+
+    const failure = options.failures?.[index];
+    if (failure) return HttpResponse.json({ message: "fake failure" }, { status: failure });
+    if (options.validKey !== undefined && authorization !== `DeepL-Auth-Key ${options.validKey}`) {
+      return HttpResponse.json({ message: "Wrong endpoint" }, { status: 403 });
+    }
+    const translate =
+      options.translate ?? ((text: string, targetLang: string) => `[${targetLang}] ${text}`);
+    return HttpResponse.json({
+      translations: body.text.map((text) => ({
+        detected_source_language: body.source_lang ?? "EN",
+        text: translate(text, body.target_lang, body.tag_handling),
+      })),
+    });
+  };
+  return {
+    handlers: [http.post(DEEPL_PRO_ENDPOINT, respond), http.post(DEEPL_FREE_ENDPOINT, respond)],
+    calls,
+  };
 }

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   PAUSING_TRANSLATE_REASONS,
   TRANSIENT_TRANSLATE_REASONS,
+  TRANSLATE_PROVIDER_KINDS,
+  TRANSLATE_PROVIDER_LIST_PRICE,
   TRANSLATE_REASONS,
   translateSettingsSaveSchema,
   translateTestSchema,
@@ -13,7 +15,12 @@ import {
 } from "./translate.ts";
 
 describe("translateSettingsSaveSchema (ADR-160)", () => {
-  const valid = { enabled: true, pricePerMillionChars: 20, monthlyCharBudget: 500_000 };
+  const valid = {
+    enabled: true,
+    kind: "GOOGLE" as const,
+    pricePerMillionChars: 20,
+    monthlyCharBudget: 500_000,
+  };
 
   it("accepts a save with or without a typed key", () => {
     expect(translateSettingsSaveSchema.parse(valid)).toEqual(valid);
@@ -33,6 +40,8 @@ describe("translateSettingsSaveSchema (ADR-160)", () => {
       { ...valid, monthlyCharBudget: 0 },
       { ...valid, monthlyCharBudget: 1.5 },
       { ...valid, apiKey: "x".repeat(201) },
+      { ...valid, kind: "AZURE" },
+      { enabled: true, pricePerMillionChars: 20, monthlyCharBudget: null },
     ]) {
       expect(translateSettingsSaveSchema.safeParse(bad).success).toBe(false);
     }
@@ -44,9 +53,25 @@ describe("translateSettingsSaveSchema (ADR-160)", () => {
 });
 
 describe("translateTestSchema", () => {
-  it("accepts a blank test (the stored key) or a typed one", () => {
-    expect(translateTestSchema.parse({})).toEqual({});
-    expect(translateTestSchema.parse({ apiKey: " k " })).toEqual({ apiKey: "k" });
+  it("accepts a blank test (the stored key) or a typed one, for a named provider", () => {
+    expect(translateTestSchema.parse({ kind: "DEEPL" })).toEqual({ kind: "DEEPL" });
+    expect(translateTestSchema.parse({ kind: "GOOGLE", apiKey: " k " })).toEqual({
+      kind: "GOOGLE",
+      apiKey: "k",
+    });
+    expect(translateTestSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("the provider registry (ADR-186)", () => {
+  it("lists a list price for every provider, inside the price field's bounds", () => {
+    for (const kind of TRANSLATE_PROVIDER_KINDS) {
+      const price = TRANSLATE_PROVIDER_LIST_PRICE[kind];
+      expect(price).toBeGreaterThan(0);
+      expect(translateSettingsSaveSchema.shape.pricePerMillionChars.safeParse(price).success).toBe(
+        true,
+      );
+    }
   });
 });
 

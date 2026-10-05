@@ -215,7 +215,16 @@ export function useLearnerDashboard(): {
   const [enrollments, setEnrollments] = useState<EnrollmentSummary[]>([]);
   const session = usePublicSession();
 
+  // changes-65: wait for the session and ask only for a signed-in learner. A
+  // guest's request could only ever answer 401, which every browser logs as
+  // a console error on `/learn` for every signed-out visitor. The band
+  // renders in no non-`ready` state, so a guest loses nothing by not asking
+  // (unlike `ProgressProvider`, whose `guest`/`off` split needs the answer).
+  const signedIn = session.status === "learner";
+  const settled = session.status !== "loading";
   useEffect(() => {
+    // A guest is answered below, at render: nothing to ask the server.
+    if (!settled || !signedIn) return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -231,12 +240,10 @@ export function useLearnerDashboard(): {
       }
     })();
     return () => controller.abort();
-  }, []);
+  }, [settled, signedIn]);
 
   // The same rule as `ProgressProvider`: a reader the public site shows as
   // signed out has no enrollments to pick up.
-  if (session.status === "anonymous" && (status === "ready" || status === "guest")) {
-    return { status: "guest", enrollments: [] };
-  }
+  if (settled && !signedIn) return { status: "guest", enrollments: [] };
   return { status, enrollments };
 }

@@ -108,6 +108,7 @@ beforeAll(async () => {
   server.use(fakeGoogleTranslate({ validKey: KEY }).handler);
   expect(
     await translate.saveTranslateSettings(user.id, {
+      kind: "GOOGLE",
       enabled: true,
       apiKey: KEY,
       pricePerMillionChars: 20,

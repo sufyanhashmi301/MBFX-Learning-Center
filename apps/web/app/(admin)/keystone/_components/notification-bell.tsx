@@ -1,11 +1,18 @@
 "use client";
 
 // Topbar notification bell (changes-01 / ADR-014). Items arrive already
-// translated from the server shell (type → catalog string with the detail
-// interpolated); this component only renders, marks read, and navigates.
+// translated (type → catalog string with the detail interpolated); this
+// component only renders, marks read, and navigates.
+//
+// The shell renders the first feed, but the shell is the admin LAYOUT, which
+// a client navigation does not re-render (changes-65): the bell used to show
+// that first count until a hard reload. It now re-reads its own feed from
+// `/keystone/api/notifications` after every navigation and whenever it is
+// opened — never on a timer, because a request is session activity and an
+// idle tab must stay idle (ADR-105).
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Bell } from "lucide-react";
 import { CountBadge } from "@repo/ui/components/count-badge";
 import { Button } from "@repo/ui/components/button";
@@ -42,26 +49,71 @@ function formatRelative(iso: string): string {
   return rtf.format(Math.round(hours / 24), "day");
 }
 
-export function NotificationBell({
-  items,
-  unreadCount,
-  labels,
-}: {
+export interface NotificationFeed {
   items: NotificationItem[];
   unreadCount: number;
+}
+
+const FEED_URL = "/keystone/api/notifications";
+
+export function NotificationBell({
+  initialFeed,
+  labels,
+}: {
+  initialFeed: NotificationFeed;
   labels: { title: string; empty: string; markAllRead: string; openMenu: string };
 }) {
-  const router = useRouter();
+  const pathname = usePathname();
+  const [feed, setFeed] = useState(initialFeed);
   const [, startTransition] = useTransition();
+  const inFlight = useRef<AbortController | null>(null);
+  const { items, unreadCount } = feed;
 
-  const markRead = (id: string) =>
+  const refresh = useCallback(async () => {
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+    try {
+      const response = await fetch(FEED_URL, { cache: "no-store", signal: controller.signal });
+      // A 401 is a session that just ended; the idle watcher handles that.
+      if (response.ok) setFeed((await response.json()) as NotificationFeed);
+    } catch {
+      // Aborted or offline: keep what is shown. The next navigation retries.
+    }
+  }, []);
+
+  // The first render already holds the shell's feed, so skip the first path.
+  const lastPath = useRef(pathname);
+  useEffect(() => {
+    if (lastPath.current === pathname) return;
+    lastPath.current = pathname;
+    void refresh();
+  }, [pathname, refresh]);
+
+  useEffect(() => () => inFlight.current?.abort(), []);
+
+  const markRead = (id: string) => {
+    // Optimistic: the row reads as read at once, the server confirms after.
+    setFeed((current) => {
+      const target = current.items.find((item) => item.id === id);
+      if (!target || target.read) return current;
+      return {
+        unreadCount: Math.max(0, current.unreadCount - 1),
+        items: current.items.map((item) => (item.id === id ? { ...item, read: true } : item)),
+      };
+    });
     startTransition(async () => {
       await markNotificationReadAction(id);
-      router.refresh();
+      await refresh();
     });
+  };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) void refresh();
+      }}
+    >
       <DropdownMenuTrigger
         render={
           <Button variant="ghost" size="icon" aria-label={labels.openMenu} className="relative">
@@ -82,8 +134,12 @@ export function NotificationBell({
               size="xs"
               onClick={() =>
                 startTransition(async () => {
+                  setFeed((current) => ({
+                    unreadCount: 0,
+                    items: current.items.map((item) => ({ ...item, read: true })),
+                  }));
                   await markAllNotificationsReadAction();
-                  router.refresh();
+                  await refresh();
                 })
               }
             >

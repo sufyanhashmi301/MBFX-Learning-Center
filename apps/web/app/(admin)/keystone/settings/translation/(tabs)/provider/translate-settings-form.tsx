@@ -1,8 +1,11 @@
 "use client";
 
-// Settings → Translation (ADR-160): switch automatic translation on or off,
-// enter the Google Cloud Translation key, and set the price and the monthly
-// character budget.
+// Settings → Translation (ADR-160, ADR-186): switch automatic translation on
+// or off, choose the provider (Google Cloud Translation or DeepL), enter its
+// key, and set the price and the monthly character budget.
+//
+// The saved key belongs to the saved provider. Choosing the other one asks
+// for its key in the same save, and the server refuses the save without it.
 //
 // The reCAPTCHA tab's three properties, applied to this key:
 //
@@ -10,11 +13,16 @@
 //      value, and a blank field means "keep the saved one".
 //   2. **Switching on is proved.** The server runs a test translation with
 //      the key being saved and refuses to switch on if it fails.
-//   3. **A refusal says why**, from the reason taxonomy, never Google's own
-//      message.
+//   3. **A refusal says why**, from the reason taxonomy, never the
+//      provider's own message.
 import * as React from "react";
 import { Languages } from "lucide-react";
-import { translateSettingsSaveSchema } from "@repo/contracts";
+import {
+  TRANSLATE_PROVIDER_KINDS,
+  TRANSLATE_PROVIDER_LIST_PRICE,
+  translateSettingsSaveSchema,
+  type TranslateProviderKindName,
+} from "@repo/contracts";
 import type { TranslateSettingsRefusal, TranslateSettingsView } from "@repo/translate";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/components/alert";
 import { Button } from "@repo/ui/components/button";
@@ -28,6 +36,7 @@ import { Input } from "@repo/ui/components/input";
 import { PasswordInput } from "@repo/ui/components/password-input";
 import { Switch } from "@repo/ui/components/switch";
 import { formatDateTime } from "@repo/utils";
+import { AdminCombobox } from "../../../../_components/combobox.tsx";
 import { EditorSection, Field } from "../../../../_components/editor/editor-section.tsx";
 import { useFieldErrors } from "../../../../_hooks/use-field-errors.ts";
 import { useServerAction } from "../../../../_hooks/use-server-action.ts";
@@ -41,13 +50,18 @@ export interface TranslateSettingsLabels {
   sectionDescription: string;
   enabled: string;
   enabledHint: string;
-  apiKey: string;
-  apiKeyHint: string;
+  provider: string;
+  providerHint: string;
+  providerOptions: Record<TranslateProviderKindName, string>;
+  apiKey: Record<TranslateProviderKindName, string>;
+  apiKeyHint: Record<TranslateProviderKindName, string>;
+  /** Shown when the chosen provider is not the one the saved key belongs to. */
+  keyForOtherProvider: string;
   apiKeySaved: string;
   showKey: string;
   hideKey: string;
   price: string;
-  priceHint: string;
+  priceHint: Record<TranslateProviderKindName, string>;
   budget: string;
   budgetHint: string;
   save: string;
@@ -86,6 +100,7 @@ export function TranslateSettingsForm({
   const save = useServerAction();
   const test = useServerAction();
   const [enabled, setEnabled] = React.useState(settings.enabled);
+  const [kind, setKind] = React.useState<TranslateProviderKindName>(settings.kind);
   const [apiKey, setApiKey] = React.useState("");
   const [price, setPrice] = React.useState(String(settings.pricePerMillionChars));
   const [budget, setBudget] = React.useState(
@@ -95,12 +110,23 @@ export function TranslateSettingsForm({
   const values = React.useMemo(
     () => ({
       enabled,
+      kind,
       apiKey: apiKey || undefined,
       pricePerMillionChars: numberOrNull(price) ?? Number.NaN,
       monthlyCharBudget: numberOrNull(budget),
     }),
-    [enabled, apiKey, price, budget],
+    [enabled, kind, apiKey, price, budget],
   );
+  // The saved key is usable only while the saved provider is chosen.
+  const keySavedForKind = settings.hasApiKey && kind === settings.kind;
+
+  const onKindChange = (next: string) => {
+    const value = TRANSLATE_PROVIDER_KINDS.find((k) => k === next);
+    if (!value) return;
+    setKind(value);
+    // A suggestion only: the provider's list price, which the admin can change.
+    setPrice(String(TRANSLATE_PROVIDER_LIST_PRICE[value]));
+  };
   const form = useFieldErrors(translateSettingsSaveSchema, values);
 
   const refusal = (reason: TranslateSettingsRefusal) =>
@@ -126,7 +152,10 @@ export function TranslateSettingsForm({
   const onTest = () => {
     test.run(
       async () => {
-        const result = await testTranslateConnectionAction({ apiKey: apiKey || undefined });
+        const result = await testTranslateConnectionAction({
+          kind,
+          apiKey: apiKey || undefined,
+        });
         if (!result.ok) throw new Error(refusal(result.reason));
       },
       { successMessage: labels.testOk },
@@ -173,16 +202,33 @@ export function TranslateSettingsForm({
           </FieldContent>
         </SwitchRow>
 
+        <Field label={labels.provider} hint={labels.providerHint} required>
+          <AdminCombobox
+            value={kind}
+            onValueChange={onKindChange}
+            options={TRANSLATE_PROVIDER_KINDS.map((value) => ({
+              value,
+              label: labels.providerOptions[value],
+            }))}
+          />
+        </Field>
+
         <Field
-          label={labels.apiKey}
-          hint={settings.hasApiKey ? labels.apiKeySaved : labels.apiKeyHint}
-          required={enabled && !settings.hasApiKey}
+          label={labels.apiKey[kind]}
+          hint={
+            keySavedForKind
+              ? labels.apiKeySaved
+              : settings.hasApiKey
+                ? `${labels.keyForOtherProvider} ${labels.apiKeyHint[kind]}`
+                : labels.apiKeyHint[kind]
+          }
+          required={(enabled || kind !== settings.kind) && !keySavedForKind}
           error={form.error("apiKey")}
         >
           <PasswordInput
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            // Never the browser's saved credential: this is Google's key.
+            // Never the browser's saved credential: this is the provider's key.
             autoComplete="new-password"
             spellCheck={false}
             showLabel={labels.showKey}
@@ -192,7 +238,7 @@ export function TranslateSettingsForm({
 
         <Field
           label={labels.price}
-          hint={labels.priceHint}
+          hint={labels.priceHint[kind]}
           required
           error={form.error("pricePerMillionChars")}
         >

@@ -1201,6 +1201,9 @@ export async function seed(db: PrismaClient) {
     },
   });
   // Seeded inactive so the switcher stays clean until content is translated.
+  // The set is ADR-188's offered languages (en above, then ur, ar, hi, zh).
+  // Spanish is no longer seeded, so a deleted `es` row stays deleted: this
+  // seed runs on every deploy (ADR-183) and an upsert would recreate it.
   // fallbackCode is per-locale config, not a special case in code (ADR-007,
   // Module 06 SKILL.md): an LTR locale falls back to English content when
   // untranslated; an RTL locale does NOT — English content in an RTL layout
@@ -1226,12 +1229,21 @@ export async function seed(db: PrismaClient) {
       fallbackCode: null,
     },
     {
-      code: "es",
-      name: "Spanish",
-      nativeName: "Español",
+      code: "hi",
+      name: "Hindi",
+      nativeName: "हिन्दी",
       direction: "LTR" as const,
-      flagEmoji: "🇪🇸",
+      flagEmoji: "🇮🇳",
       sortOrder: 4,
+      fallbackCode: "en",
+    },
+    {
+      code: "zh",
+      name: "Chinese (Simplified)",
+      nativeName: "简体中文",
+      direction: "LTR" as const,
+      flagEmoji: "🇨🇳",
+      sortOrder: 5,
       fallbackCode: "en",
     },
   ]) {
@@ -1241,7 +1253,7 @@ export async function seed(db: PrismaClient) {
       create: { ...l, isDefault: false, isActive: false },
     });
   }
-  console.log("  locales: 4 (en active)");
+  console.log("  locales: 5 (en active)");
 
   // Theme — brand colours shared across modes, surfaces authored per mode.
   await db.theme.upsert({

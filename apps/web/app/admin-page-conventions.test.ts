@@ -281,3 +281,18 @@ describe("ADR-140 §3 — an editor's heading is static, and its actions share t
     expect(readFileSync(page, "utf8")).toContain("<EditorPage");
   });
 });
+
+describe("changes-65 — the portal root is never a crumb", () => {
+  // The trail read "Keystone > Learning > Lessons > Details": the root segment
+  // humanised into a crumb that links to the staff sign-in.
+  const src = readFileSync(resolve(COMPONENTS, "breadcrumbs.tsx"), "utf8");
+
+  it("drops the keystone segment before labelling", () => {
+    expect(src).toContain('const ROOT_SEGMENT = "keystone"');
+    expect(src).toMatch(/all\.slice\(base\)/);
+  });
+
+  it("keeps the full /keystone path in each crumb's href", () => {
+    expect(src).toMatch(/all\.slice\(0, base \+ index \+ 1\)/);
+  });
+});

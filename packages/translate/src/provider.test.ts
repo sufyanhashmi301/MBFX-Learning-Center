@@ -33,10 +33,15 @@ describe("the sealed key has exactly one reader", () => {
   });
 });
 
-describe("one door to Google", () => {
+describe("one door to the provider", () => {
   it("exports neither the driver nor its loader", () => {
     const index = withoutComments(readFileSync(join(SRC, "index.ts"), "utf8"));
-    for (const leak of ["googleTranslateDriver", "loadTranslateDriver", "openTranslateKey"]) {
+    for (const leak of [
+      "googleTranslateDriver",
+      "deeplTranslateDriver",
+      "loadTranslateDriver",
+      "openTranslateKey",
+    ]) {
       expect(index, `index.ts must not export ${leak}`).not.toContain(leak);
     }
   });

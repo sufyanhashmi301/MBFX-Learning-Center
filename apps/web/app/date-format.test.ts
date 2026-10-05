@@ -49,7 +49,8 @@ function privateDateFormats(src: string): string[] {
 // ISO that deliberately crosses to the client, which formats it itself.
 const ISO_FOR_CLIENT = [
   // The notification bell renders it as relative time ("3 hours ago").
-  "admin-shell.tsx: createdAt: n.createdAt.toISOString()",
+  // Mapped in one loader since changes-65, shared by the shell and the bell's feed.
+  "notification-items.ts: createdAt: n.createdAt.toISOString()",
 ];
 
 /** ISO rendered to a person: a day slice used as a value, or a date prop. */

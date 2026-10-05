@@ -106,6 +106,13 @@ describe("proxy — the admin's default language, public site only (ADR-182)", (
     expect(location(page)).toBe("/ar/news/some-article?page=2");
   });
 
+  it("never lets a cache keep the hop (changes-65, ADR-187)", async () => {
+    serving("ar");
+    const response = await proxy(requestFor("/news"));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
   it("outranks the browser's Accept-Language", async () => {
     serving("ar");
     const request = requestFor("/news");

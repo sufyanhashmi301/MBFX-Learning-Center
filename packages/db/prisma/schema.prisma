@@ -239,20 +239,20 @@ model Permission {
 }
 
 model Role {
-  id          String   @id @default(cuid())
-  key         String   @unique @db.VarChar(50) // "content_manager"
-  name        String   @db.VarChar(100)
-  description String?  @db.VarChar(500)
-  isSystem    Boolean  @default(false) // cannot be deleted
-  level       Int      @default(0) // higher = more senior; guards escalation
-  sortOrder   Int      @default(0)
+  id                String   @id @default(cuid())
+  key               String   @unique @db.VarChar(50) // "content_manager"
+  name              String   @db.VarChar(100)
+  description       String?  @db.VarChar(500)
+  isSystem          Boolean  @default(false) // cannot be deleted
+  level             Int      @default(0) // higher = more senior; guards escalation
+  sortOrder         Int      @default(0)
   // ADR-183: the permission keys the SEED last granted this system role. A
   // deploy re-seeds, and diffing against this ledger is what lets it add a
   // key the code newly grants (or revoke one it stopped granting) without
   // undoing what an admin changed on the role since. Null on custom roles.
   seededPermissions Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   permissions RolePermission[]
   users       UserRole[]
@@ -682,11 +682,11 @@ model Locale {
 /// file is made entirely of these. Public namespaces only — the service
 /// refuses an admin key (ADR-043 #2). Deleted with its language.
 model MessageOverride {
-  id     String @id @default(cuid())
-  locale String @db.VarChar(10)
+  id        String  @id @default(cuid())
+  locale    String  @db.VarChar(10)
   /// Dotted catalog key, e.g. `home.hero.title`.
-  key    String @db.VarChar(191)
-  value  String @db.Text
+  key       String  @db.VarChar(191)
+  value     String  @db.Text
   /// Written by "Translate missing with Google"; a person's save clears it.
   isMachine Boolean @default(false)
   updatedBy String?
@@ -2949,10 +2949,13 @@ model AiBudgetPeriod {
 /// column: the endpoint is fixed in code, so a changed setting cannot send the
 /// site's content to another host (ADR-160 #5).
 model TranslateProvider {
-  id           String  @id @default("default")
+  id           String                @id @default("default")
   /// Off until a connection test has passed with the key being saved.
-  enabled      Boolean @default(false)
-  apiKeyCipher String? @db.Text
+  enabled      Boolean               @default(false)
+  /// Which service translates (ADR-186). The sealed key belongs to it: a
+  /// change of provider needs a new key in the same save.
+  kind         TranslateProviderKind @default(GOOGLE)
+  apiKeyCipher String?               @db.Text
 
   /// USD per 1M characters, admin-editable, copied into each usage row at
   /// write time (ADR-100 #3). Decimal for the reason AiModel's prices are.
@@ -2976,11 +2979,14 @@ model TranslateProvider {
 /// One row per request to Google (a batch of segments), or per refusal made
 /// before a request. Holds no text: a count, never the content.
 model TranslateUsage {
-  id     String              @id @default(cuid())
-  status TranslateCallStatus
+  id       String                 @id @default(cuid())
+  status   TranslateCallStatus
   /// Machine-readable taxonomy (`TRANSLATE_REASONS`), never a raw provider
   /// message.
-  reason String?             @db.VarChar(40)
+  reason   String?                @db.VarChar(40)
+  /// Which service was called (ADR-186 #6). Null for a refusal made before
+  /// any provider was loaded.
+  provider TranslateProviderKind?
 
   sourceLocale String          @db.VarChar(10)
   targetLocale String          @db.VarChar(10)
@@ -3020,6 +3026,14 @@ model TranslateUsagePeriod {
   updatedAt  DateTime @updatedAt
 
   @@map("translate_usage_periods")
+}
+
+/// The automatic translation service (ADR-186).
+enum TranslateProviderKind {
+  /// Google Cloud Translation Basic (v2), ADR-160.
+  GOOGLE
+  /// DeepL API (v2), free or Pro by the key.
+  DEEPL
 }
 
 enum TranslateCallStatus {

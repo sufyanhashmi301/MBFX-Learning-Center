@@ -101,7 +101,12 @@ Non-negotiable. A PR violating any numbered rule here does not merge.
     URL setting), so the key cannot redirect content anywhere; its harm is
     spend. Gated on **`translations.provider.manage`, seeded to super_admin
     only**, with a monthly character budget that pauses work at the cap. The
-    driver sends it in a header, never in the URL.
+    driver sends it in a header, never in the URL. **ADR-186** lets the same
+    seal hold a **DeepL** key instead: `TranslateProvider.kind` names which
+    service the one stored key belongs to, a change of provider needs a new
+    key in the same save, and DeepL's two hosts (Free and Pro, chosen by the
+    key's `:fx` suffix) are fixed in code too. It is the same secret slot,
+    not a sixth seal.
 
     Nothing else may follow this path without its own ADR, which must state
     why the secret cannot live in env, name its single reader, justify its

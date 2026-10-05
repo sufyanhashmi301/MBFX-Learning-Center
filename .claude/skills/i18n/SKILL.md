@@ -10,6 +10,12 @@ launch locale) written here when routing lands.
   English catalog (missing key = TS error).
 - **Content:** DB translation tables (Module 01 schema) with per-locale
   slugs and `translationStatus` lifecycle.
+- **Machine translation provider (ADR-160, ADR-186):** Google Cloud
+  Translation Basic or DeepL, one at a time, chosen at Settings → Translation
+  → Provider. Everything above the driver (`google.ts` / `deepl.ts` in
+  `@repo/translate`) is provider-neutral: protected spans travel as
+  `translate="no"`, which both honour in HTML mode. A new locale code must map
+  to a DeepL target (`deeplTargetCode`, guarded by `deepl.test.ts`).
 
 ## Routing (single app, ADR-006)
 

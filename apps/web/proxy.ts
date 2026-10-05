@@ -423,11 +423,26 @@ export async function proxy(request: NextRequest) {
 
   if (prefix === "") {
     const preferred = await adminDefaultRedirect(request);
-    if (preferred) return applySecurityHeaders(preferred, "public", null);
+    if (preferred) return applySecurityHeaders(uncachedRedirect(preferred), "public", null);
   }
 
   const response = prefix === "" ? await intlServed(request) : intl(request);
-  return applySecurityHeaders(response, "public", null);
+  return applySecurityHeaders(uncachedRedirect(response), "public", null);
+}
+
+/**
+ * A language redirect is per VISITOR (their cookie, their browser's
+ * `Accept-Language`, the admin's default), but its URL is shared: `/news`
+ * sends one reader to `/ar/news` and the next to `/es/news`. Without a
+ * Cache-Control, a CDN rule that caches HTML may cache the hop and send
+ * everyone after the first reader to their language (changes-65, ADR-187).
+ * A non-redirect passes through untouched.
+ */
+function uncachedRedirect(response: NextResponse): NextResponse {
+  if (response.status >= 300 && response.status < 400) {
+    response.headers.set("Cache-Control", "private, no-store");
+  }
+  return response;
 }
 
 /**

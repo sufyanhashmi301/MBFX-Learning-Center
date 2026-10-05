@@ -19,7 +19,7 @@ import { generateSecretKey } from "@repo/secrets";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { fakeGoogleTranslate } from "./testing.ts";
+import { fakeDeepl, fakeGoogleTranslate } from "./testing.ts";
 
 // Types only: the modules are loaded after DATABASE_URL points at the
 // container, so a static import would build a client against the wrong URL.
@@ -81,6 +81,7 @@ async function enableProvider(extra: { monthlyCharBudget?: number | null } = {})
   const fake = fakeGoogleTranslate({ validKey: VALID_KEY });
   server.use(fake.handler);
   const result = await t.saveTranslateSettings(ACTOR, {
+    kind: "GOOGLE",
     enabled: true,
     apiKey: VALID_KEY,
     pricePerMillionChars: 20,
@@ -266,6 +267,7 @@ describe("Settings → Translation", () => {
     server.use(fakeGoogleTranslate({ validKey: VALID_KEY }).handler);
 
     const result = await t.saveTranslateSettings(ACTOR, {
+      kind: "GOOGLE",
       enabled: true,
       apiKey: "wrong",
       pricePerMillionChars: 20,
@@ -279,6 +281,7 @@ describe("Settings → Translation", () => {
   it("will not switch on with no key at all", async () => {
     expect(
       await t.saveTranslateSettings(ACTOR, {
+        kind: "GOOGLE",
         enabled: true,
         pricePerMillionChars: 20,
         monthlyCharBudget: null,
@@ -316,6 +319,7 @@ describe("Settings → Translation", () => {
 
     expect(
       await t.saveTranslateSettings(ACTOR, {
+        kind: "GOOGLE",
         enabled: false,
         pricePerMillionChars: 25,
         monthlyCharBudget: null,
@@ -334,6 +338,7 @@ describe("Settings → Translation", () => {
     try {
       expect(
         await t.saveTranslateSettings(ACTOR, {
+          kind: "GOOGLE",
           enabled: false,
           apiKey: VALID_KEY,
           pricePerMillionChars: 20,
@@ -349,8 +354,8 @@ describe("Settings → Translation", () => {
     await enableProvider();
     server.use(fakeGoogleTranslate({ validKey: VALID_KEY }).handler);
 
-    expect(await t.testTranslateConnection(ACTOR, {})).toEqual({ ok: true });
-    expect(await t.testTranslateConnection(ACTOR, { apiKey: "typo" })).toEqual({
+    expect(await t.testTranslateConnection(ACTOR, { kind: "GOOGLE" })).toEqual({ ok: true });
+    expect(await t.testTranslateConnection(ACTOR, { kind: "GOOGLE", apiKey: "typo" })).toEqual({
       ok: false,
       reason: "auth_failed",
     });
@@ -363,10 +368,116 @@ describe("Settings → Translation", () => {
   });
 
   it("asks for a key when there is none to test", async () => {
-    expect(await t.testTranslateConnection(ACTOR, {})).toEqual({
+    expect(await t.testTranslateConnection(ACTOR, { kind: "GOOGLE" })).toEqual({
       ok: false,
       reason: "keyRequired",
     });
+  });
+});
+
+describe("DeepL as the provider (ADR-186)", () => {
+  const DEEPL_KEY = "deepl-test-key:fx";
+
+  async function switchToDeepl() {
+    const fake = fakeDeepl({ validKey: DEEPL_KEY });
+    server.use(...fake.handlers);
+    const result = await t.saveTranslateSettings(ACTOR, {
+      kind: "DEEPL",
+      enabled: true,
+      apiKey: DEEPL_KEY,
+      pricePerMillionChars: 25,
+      monthlyCharBudget: null,
+    });
+    expect(result).toEqual({ ok: true });
+    await db.translateUsage.deleteMany();
+    await db.translateUsagePeriod.deleteMany();
+    return fake;
+  }
+
+  it("will not change provider without a new key, so a Google key never reaches DeepL", async () => {
+    await enableProvider();
+    const fake = fakeDeepl();
+    server.use(...fake.handlers);
+
+    expect(
+      await t.saveTranslateSettings(ACTOR, {
+        kind: "DEEPL",
+        enabled: true,
+        pricePerMillionChars: 25,
+        monthlyCharBudget: null,
+      }),
+    ).toEqual({ ok: false, reason: "keyRequired" });
+    expect(await t.testTranslateConnection(ACTOR, { kind: "DEEPL" })).toEqual({
+      ok: false,
+      reason: "keyRequired",
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    const row = await db.translateProvider.findUniqueOrThrow({ where: { id: "default" } });
+    expect(row.kind).toBe("GOOGLE");
+  });
+
+  it("switches with a key that passes DeepL's test, and translates through DeepL from then on", async () => {
+    await enableProvider();
+    const fake = await switchToDeepl();
+    const google = fakeGoogleTranslate();
+    server.use(google.handler);
+
+    await expect(
+      t.translateTexts(["Hello"], { source: "en", target: "pt", ...NO_WAIT }),
+    ).resolves.toEqual(["[PT-BR] Hello"]);
+
+    expect(google.calls).toHaveLength(0);
+    expect(fake.calls.at(-1)?.body).toMatchObject({ source_lang: "EN", target_lang: "PT-BR" });
+    const view = await t.loadTranslateSettings();
+    expect(view).toMatchObject({ kind: "DEEPL", enabled: true, hasApiKey: true });
+    expect(JSON.stringify(view)).not.toContain(DEEPL_KEY);
+    expect(await t.getAutoTranslateProvider()).toBe("DEEPL");
+
+    const usage = await db.translateUsage.findMany();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ status: "OK", provider: "DEEPL", characters: 5 });
+
+    const audit = await db.auditLog.findMany({
+      where: { action: "settings.translate.update" },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(audit.at(-1)?.changes).toMatchObject({
+      before: { kind: "GOOGLE" },
+      after: { kind: "DEEPL" },
+      apiKeyChanged: true,
+    });
+    expect(JSON.stringify(audit)).not.toContain(DEEPL_KEY);
+  });
+
+  it("refuses the switch when DeepL rejects the key, and keeps Google", async () => {
+    await enableProvider();
+    server.use(...fakeDeepl({ validKey: DEEPL_KEY }).handlers);
+
+    expect(
+      await t.saveTranslateSettings(ACTOR, {
+        kind: "DEEPL",
+        enabled: true,
+        apiKey: "not-the-key",
+        pricePerMillionChars: 25,
+        monthlyCharBudget: null,
+      }),
+    ).toEqual({ ok: false, reason: "auth_failed" });
+    const row = await db.translateProvider.findUniqueOrThrow({ where: { id: "default" } });
+    expect(row.kind).toBe("GOOGLE");
+  });
+
+  it("pauses on DeepL's quota answer rather than failing", async () => {
+    await enableProvider();
+    await switchToDeepl();
+    server.use(...fakeDeepl({ validKey: DEEPL_KEY, failures: { 0: 456 } }).handlers);
+
+    await expect(
+      t.translateTexts(["Hello"], { source: "en", target: "ar", ...NO_WAIT }),
+    ).rejects.toMatchObject({ reason: "quota_exceeded" });
+    expect(t.isPausing(new t.TranslateError("quota_exceeded", ""))).toBe(true);
+    const usage = await db.translateUsage.findMany();
+    expect(usage[0]).toMatchObject({ status: "FAILED", provider: "DEEPL" });
   });
 });
 

@@ -12,7 +12,7 @@ import { routing } from "@repo/i18n/routing";
 import { adminSessionTimeoutMs } from "@repo/contracts";
 import { can, canAny, type Subject } from "@repo/rbac";
 import { getSetting } from "@repo/settings";
-import { countUnreadNotifications, getBrandAssets, listNotifications } from "@repo/core";
+import { getBrandAssets } from "@repo/core";
 import { Toaster } from "@repo/ui/components/sonner";
 import { ModeToggle } from "@repo/ui/components/mode-toggle";
 import { AdminBreadcrumbs } from "./breadcrumbs.tsx";
@@ -22,7 +22,8 @@ import { AiWriter } from "./ai-writer.tsx";
 import { AdminSidebar, SIDEBAR_COOKIE } from "./admin-sidebar.tsx";
 import { type AdminNavGroup, type VisitSiteLink } from "./admin-sidebar-nav.tsx";
 import { IdleTimeout } from "./idle-timeout.tsx";
-import { NotificationBell, type NotificationItem } from "./notification-bell.tsx";
+import { NotificationBell } from "./notification-bell.tsx";
+import { loadNotificationFeed } from "./notification-items.ts";
 import { ProfileMenu } from "./profile-menu.tsx";
 import { SETTINGS_ENTRY_KEYS } from "../settings/_components/settings-entry-keys.ts";
 
@@ -316,11 +317,10 @@ export async function AdminShell({
   image: string | null;
   children: React.ReactNode;
 }) {
-  const [t, unreadCount, notifications, brandAssets, cookieStore, sessionTimeout, writerOn] =
+  const [t, notificationFeed, brandAssets, cookieStore, sessionTimeout, writerOn] =
     await Promise.all([
       getTranslations("admin"),
-      countUnreadNotifications(subject.id),
-      listNotifications(subject.id),
+      loadNotificationFeed(subject.id),
       getBrandAssets(),
       // Sidebar collapse state is read on the SERVER so the first paint is
       // already the right width (see admin-sidebar.tsx for why not
@@ -382,18 +382,6 @@ export async function AdminShell({
       ],
     },
   ];
-
-  // Notification text renders HERE (type → catalog string, detail
-  // interpolated) so the client bell stays a dumb list.
-  const items: NotificationItem[] = notifications.map((n) => ({
-    id: n.id,
-    text: t.has(`notifications.${n.type}`)
-      ? t(`notifications.${n.type}`, { detail: n.detail })
-      : n.type,
-    href: n.href,
-    read: n.readAt !== null,
-    createdAt: n.createdAt.toISOString(),
-  }));
 
   return (
     <div className="flex min-h-full">
@@ -467,11 +455,13 @@ export async function AdminShell({
           />
           <div className="ms-auto flex items-center gap-1 md:gap-2">
             {writerOn && (
-              <AiWriter languages={await writerLanguages()} defaultLanguage={routing.defaultLocale} />
+              <AiWriter
+                languages={await writerLanguages()}
+                defaultLanguage={routing.defaultLocale}
+              />
             )}
             <NotificationBell
-              items={items}
-              unreadCount={unreadCount}
+              initialFeed={notificationFeed}
               labels={{
                 title: t("notificationsTitle"),
                 empty: t("notificationsEmpty"),

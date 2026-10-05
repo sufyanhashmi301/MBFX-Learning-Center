@@ -7,6 +7,8 @@ node_modules/
 # Build outputs
 .next/
 .next-e2e/
+# Any alternate NEXT_DIST_DIR build (e.g. .next-c65), never tracked.
+.next-*/
 dist/
 build/
 out/

@@ -12,7 +12,7 @@ import { getAuthoringLocales } from "@repo/i18n";
 import { routing } from "@repo/i18n/routing";
 import { getAiAvailability } from "@repo/ai";
 import { TRANSLATE_REASONS } from "@repo/contracts";
-import { isAutoTranslateAvailable } from "@repo/translate";
+import { getAutoTranslateProvider } from "@repo/translate";
 import { EditorPage } from "../../_components/admin-page.tsx";
 import {
   aiAssistantLabels,
@@ -89,20 +89,28 @@ export default async function ArticleEditPage({
         }
       : undefined;
   const summarize = canUseAi && availability.features.summarization;
-  // ADR-160: "Translate with Google" — present only when automatic translation
-  // is switched on AND the viewer can save an article (the prefill action
-  // refuses anyone else, so a viewer would get a button that always fails).
+  // ADR-160/186: "Translate with Google" or "… with DeepL" — present only when
+  // automatic translation is switched on AND the viewer can save an article
+  // (the prefill action refuses anyone else, so a viewer would get a button
+  // that always fails). The prop keeps its ADR-160 name.
+  const translateProvider = canAny(subject, ["analysis.update", "news.manage"])
+    ? await getAutoTranslateProvider()
+    : null;
+  const providerName = translateProvider ? t(`translate.providerNames.${translateProvider}`) : "";
   const google =
-    canAny(subject, ["analysis.update", "news.manage"]) && (await isAutoTranslateAvailable())
+    translateProvider !== null
       ? {
           labels: {
-            action: t("translate.editor.action", { source: routing.defaultLocale }),
+            action: t("translate.editor.action", {
+              source: routing.defaultLocale,
+              provider: providerName,
+            }),
             confirmTitle: t("translate.editor.confirmTitle"),
             confirmDescription: t("translate.editor.confirmDescription"),
             confirm: t("translate.editor.confirm"),
             cancel: t("cancel"),
             working: t("translate.editor.working"),
-            done: t("translate.editor.done"),
+            done: t("translate.editor.done", { provider: providerName }),
             failed: t("translate.editor.failed"),
             reasons: Object.fromEntries(
               TRANSLATE_REASONS.map((reason) => [reason, t(`translate.reasons.${reason}`)]),

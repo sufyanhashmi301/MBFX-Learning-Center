@@ -1,7 +1,7 @@
 // Fills a locale's PUBLIC catalog from en.json by machine translation
 // (plan §4.4, ADR-160). Dev-run, once per language, before the activation PR.
 //
-//   pnpm translate:catalog -- --locale ar            # Google, through the door
+//   pnpm translate:catalog -- --locale ar            # the chosen provider, through the door
 //   pnpm translate:catalog -- --locale ar --fake     # no network, no database
 //   pnpm translate:catalog -- --locale ar --dry-run  # report only, write nothing
 //

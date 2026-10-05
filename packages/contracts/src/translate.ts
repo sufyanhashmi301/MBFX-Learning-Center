@@ -1,11 +1,26 @@
 // Automatic translation (ADR-160): the names `@repo/translate` and the
 // Settings → Translation screen both have to agree on.
 //
-// The provider is Google Cloud Translation Basic (v2). Its API key is DATA an
-// admin enters, sealed under TRANSLATE_SECRET_KEY and read by
-// `@repo/translate` alone (security.md #10). Nothing here carries the key
+// The provider is Google Cloud Translation Basic (v2) or DeepL (ADR-186). Its
+// API key is DATA an admin enters, sealed under TRANSLATE_SECRET_KEY and read
+// by `@repo/translate` alone (security.md #10). Nothing here carries the key
 // back out: the save schema accepts one, and no view schema has a field for it.
 import { z } from "zod";
+
+/** The services that can translate (ADR-186). Mirrors the Prisma enum. */
+export const TRANSLATE_PROVIDER_KINDS = ["GOOGLE", "DEEPL"] as const;
+
+export type TranslateProviderKindName = (typeof TRANSLATE_PROVIDER_KINDS)[number];
+
+/**
+ * Each provider's list price in USD per million characters, as checked on
+ * 2026-10-05: Google Basic $20, DeepL API Pro $25. Only a suggestion the form
+ * fills in when the provider changes; the admin's figure is what is stored.
+ */
+export const TRANSLATE_PROVIDER_LIST_PRICE: Record<TranslateProviderKindName, number> = {
+  GOOGLE: 20,
+  DEEPL: 25,
+};
 
 /**
  * Why a translation did not happen. A machine-readable taxonomy, stored in
@@ -17,19 +32,19 @@ export const TRANSLATE_REASONS = [
   "not_configured",
   /** TRANSLATE_SECRET_KEY is missing or the stored seal will not open. */
   "seal_unavailable",
-  /** Google refused the key. */
+  /** The provider refused the key. */
   "auth_failed",
-  /** The Google project's quota is used up. */
+  /** The provider account's quota is used up. */
   "quota_exceeded",
   /** Too many requests right now; worth retrying later. */
   "rate_limited",
   /** Our own monthly character budget is reached (ADR-160 #6). */
   "budget_exceeded",
-  /** Google rejected the request itself (bad language code, too large). */
+  /** The provider rejected the request itself (bad language code, too large). */
   "bad_request",
-  /** Google answered with a server error. */
+  /** The provider answered with a server error. */
   "provider_error",
-  /** Google could not be reached, or the answer could not be read. */
+  /** The provider could not be reached, or the answer could not be read. */
   "network_error",
   /**
    * Our own code failed while handling a job — a bug, not Google. Kept apart
@@ -68,6 +83,8 @@ export const TRANSLATE_MAX_MONTHLY_CHARS = 2_000_000_000;
  */
 export const translateSettingsSaveSchema = z.object({
   enabled: z.boolean(),
+  /** The service. Changing it needs `apiKey` too (ADR-186 #1), which the service checks. */
+  kind: z.enum(TRANSLATE_PROVIDER_KINDS),
   apiKey: z.string().trim().max(200).optional(),
   pricePerMillionChars: z.number().min(0).max(TRANSLATE_MAX_PRICE_PER_MILLION),
   monthlyCharBudget: z.number().int().min(1).max(TRANSLATE_MAX_MONTHLY_CHARS).nullable(),
@@ -75,8 +92,12 @@ export const translateSettingsSaveSchema = z.object({
 
 export type TranslateSettingsSaveInput = z.infer<typeof translateSettingsSaveSchema>;
 
-/** "Test connection": a typed key, or the saved one when blank. */
+/**
+ * "Test connection": a typed key, or the saved one when blank. `kind` is the
+ * provider the form shows; a stored key is only ever tested against its own.
+ */
 export const translateTestSchema = z.object({
+  kind: z.enum(TRANSLATE_PROVIDER_KINDS),
   apiKey: z.string().trim().max(200).optional(),
 });
 
@@ -151,7 +172,7 @@ export const interfaceTextResetSchema = z.object({
 
 export type InterfaceTextResetInput = z.infer<typeof interfaceTextResetSchema>;
 
-/** Interface text, "Translate missing with Google" (ADR-178 #5). */
+/** Interface text, "Translate missing automatically" (ADR-178 #5). */
 export const interfaceTextFillSchema = z.object({ locale: localeCodeSchema });
 
 export type InterfaceTextFillInput = z.infer<typeof interfaceTextFillSchema>;

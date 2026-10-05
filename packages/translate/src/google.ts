@@ -1,4 +1,5 @@
-// Google Cloud Translation Basic (v2) — the one driver (ADR-160).
+// Google Cloud Translation Basic (v2), ADR-160. One of two drivers since
+// ADR-186; `deepl.ts` is the other.
 //
 // A plain `fetch`, no SDK: the v2 surface is one POST, and a vendor SDK would
 // bring an auth stack for the service-account credential this edition does
@@ -12,24 +13,12 @@
 //      error trace that prints the request URL.
 //   2. **Google's message never leaves.** Every failure becomes a
 //      `TranslateError` with a taxonomy reason; the raw body is dropped.
+import { MAX_CHARS_PER_REQUEST, MAX_SEGMENTS_PER_REQUEST } from "./batch.ts";
+import type { TranslateDriver } from "./driver.ts";
 import { TranslateError } from "./errors.ts";
 
 /** Fixed in code: there is deliberately no base URL setting (ADR-160 #5). */
 export const GOOGLE_TRANSLATE_ENDPOINT = "https://translation.googleapis.com/language/translate/v2";
-
-export type TranslateWireFormat = "text" | "html";
-
-export interface TranslateDriverRequest {
-  segments: readonly string[];
-  source: string;
-  target: string;
-  format: TranslateWireFormat;
-}
-
-export interface TranslateDriver {
-  /** One HTTP request. The caller batches; this never splits. */
-  translate(request: TranslateDriverRequest, signal?: AbortSignal): Promise<string[]>;
-}
 
 interface GoogleErrorBody {
   error?: {
@@ -75,6 +64,7 @@ export function classifyGoogleError(status: number, body: GoogleErrorBody | null
 
 export function googleTranslateDriver(apiKey: string): TranslateDriver {
   return {
+    limits: { maxSegments: MAX_SEGMENTS_PER_REQUEST, maxChars: MAX_CHARS_PER_REQUEST },
     async translate(request, signal) {
       let response: Response;
       try {

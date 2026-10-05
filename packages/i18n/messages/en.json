@@ -830,18 +830,38 @@
     },
     "translate": {
       "title": "Translation",
-      "description": "Automatic translation of the public site: how much of each language is done, which languages are live, what needs a person, and the Google Cloud Translation key.",
-      "section": "Google Cloud Translation",
-      "sectionDescription": "New and changed content is translated automatically with Google Cloud Translation (Basic). Machine translations are shown to readers and kept out of search results until someone saves them.",
+      "description": "Automatic translation of the public site: how much of each language is done, which languages are live, what needs a person, and the translation provider's key.",
+      "section": "Translation provider",
+      "sectionDescription": "New and changed content is translated automatically by the provider chosen here. Machine translations are shown to readers and kept out of search results until someone saves them.",
+      "provider": "Provider",
+      "providerHint": "The service that translates. Changing it needs that service's API key, entered here in the same save.",
+      "providerOptions": {
+        "GOOGLE": "Google Cloud Translation (Basic)",
+        "DEEPL": "DeepL API"
+      },
+      "providerNames": {
+        "GOOGLE": "Google",
+        "DEEPL": "DeepL"
+      },
+      "providerKeys": {
+        "GOOGLE": {
+          "apiKey": "Google Cloud Translation API key",
+          "apiKeyHint": "From Google Cloud Console → APIs & Services → Credentials. Restrict the key to the Cloud Translation API, and to this server's address if your hosting allows it.",
+          "priceHint": "Used to estimate spend. Check Google's current price for Cloud Translation Basic."
+        },
+        "DEEPL": {
+          "apiKey": "DeepL API key",
+          "apiKeyHint": "From your DeepL account → API Keys. A key ending in :fx is a DeepL API Free key and is sent to DeepL's free service; any other key goes to DeepL API Pro.",
+          "priceHint": "Used to estimate spend. Check DeepL's current API Pro price per character; a Free key is billed nothing up to its monthly allowance."
+        }
+      },
+      "keyForOtherProvider": "The saved key belongs to {provider}. Enter a key for the provider chosen above.",
       "enabled": "Translate automatically",
       "enabledHint": "Saving with this on first runs a test translation with the key. It will not switch on if the test fails.",
-      "apiKey": "Google Cloud Translation API key",
-      "apiKeyHint": "From Google Cloud Console → APIs & Services → Credentials. Restrict the key to the Cloud Translation API, and to this server's address if your hosting allows it.",
       "apiKeySaved": "A key is saved. Leave blank to keep it, or enter a new one to replace it.",
       "showKey": "Show key",
       "hideKey": "Hide key",
       "price": "Price per million characters (USD)",
-      "priceHint": "Used to estimate spend. Check Google's current price for Cloud Translation Basic.",
       "budget": "Monthly character budget",
       "budgetHint": "Automatic translation pauses when this is reached, and resumes next month. Leave blank for no limit.",
       "test": "Test connection",
@@ -849,7 +869,7 @@
       "lastTested": "Last test:",
       "never": "Never",
       "usageTitle": "This month",
-      "usageDescription": "Characters sent to Google since the first of the month (UTC). Costs are estimated.",
+      "usageDescription": "Characters sent for translation since the first of the month (UTC). Costs are estimated.",
       "usageCharacters": "Characters",
       "usageCost": "Estimated cost",
       "usageRequests": "Requests",
@@ -859,27 +879,27 @@
       "sealKeyMissingBody": "The key is stored encrypted, and the server needs TRANSLATE_SECRET_KEY in its environment to do that. Set it (32 random bytes, base64) and restart.",
       "refusals": {
         "sealKeyMissing": "The key cannot be stored until TRANSLATE_SECRET_KEY is set on the server.",
-        "keyRequired": "Enter an API key first."
+        "keyRequired": "Enter an API key for this provider first. A key saved for another provider is never sent to this one."
       },
       "reasons": {
         "not_configured": "Automatic translation is off, or no key is saved.",
         "seal_unavailable": "The saved key cannot be opened. Check TRANSLATE_SECRET_KEY on the server, then enter the key again.",
-        "auth_failed": "Google refused the key. Check that it is correct, that the Cloud Translation API is enabled for its project, and that its restrictions allow this server.",
-        "quota_exceeded": "The Google project's translation quota is used up.",
-        "rate_limited": "Google is limiting requests right now. Try again in a minute.",
+        "auth_failed": "The provider refused the key. Check that it is correct and still active, and for Google that the Cloud Translation API is enabled and its restrictions allow this server.",
+        "quota_exceeded": "The provider account's translation quota is used up.",
+        "rate_limited": "The provider is limiting requests right now. Try again in a minute.",
         "budget_exceeded": "This month's character budget is reached. Raise it, or wait for next month.",
-        "bad_request": "Google rejected the request.",
-        "provider_error": "Google Translate had an error. Try again later.",
-        "network_error": "Google Translate could not be reached.",
+        "bad_request": "The provider rejected the request.",
+        "provider_error": "The provider had an error. Try again later.",
+        "network_error": "The provider could not be reached.",
         "internal_error": "Something went wrong on our side while translating. The failure is logged; try Sync again, and report it if it repeats."
       },
       "editor": {
-        "action": "Translate from {source} with Google",
+        "action": "Translate from {source} with {provider}",
         "confirmTitle": "Replace this translation?",
-        "confirmDescription": "This language already has text a person wrote. Google's translation will replace it in the form; nothing is saved until you press Save.",
+        "confirmDescription": "This language already has text a person wrote. The machine translation will replace it in the form; nothing is saved until you press Save.",
         "confirm": "Replace",
         "working": "Translating…",
-        "done": "Translated with Google. Review it, then Save.",
+        "done": "Translated with {provider}. Review it, then Save.",
         "failed": "Could not translate"
       },
       "tabOverview": "Overview",
@@ -908,7 +928,7 @@
       },
       "overview": {
         "offTitle": "Automatic translation is off",
-        "offBody": "Nothing is translated automatically until a Google Cloud Translation key is saved and switched on under Provider. The counts below still show what exists.",
+        "offBody": "Nothing is translated automatically until a translation provider's key is saved and switched on under Provider. The counts below still show what exists.",
         "costNote": "Costs are estimated from the price set under Provider.",
         "languagesTitle": "Languages",
         "languagesDescription": "How much translatable content each language has, and who wrote it. Machine translations are live but kept out of search results until a person saves them.",
@@ -966,7 +986,7 @@
       },
       "languages": {
         "howTitle": "Adding a language",
-        "howBody": "Add a language from the list, then fill its interface text under Interface text, by hand or with Google, and write its legal site text under Site text. Then turn on its Live switch: its pages, its entry in the language menu and its sitemap entries appear at once, and content is translated automatically in the background. Turning it off hides it from the public site again and deletes nothing. Any number of languages can be live at the same time.",
+        "howBody": "Add a language from the list, then fill its interface text under Interface text, by hand or automatically, and write its legal site text under Site text. Then turn on its Live switch: its pages, its entry in the language menu and its sitemap entries appear at once, and content is translated automatically in the background. Turning it off hides it from the public site again and deletes nothing. Any number of languages can be live at the same time.",
         "search": "Search languages",
         "colDirection": "Direction",
         "colCatalog": "Interface text",
@@ -981,7 +1001,7 @@
         "activate": "Switch on",
         "deactivate": "Switch off",
         "activateTitle": "Switch {language} on?",
-        "activateBody": "{language} goes live at once. Google will translate about {characters} characters (estimated {cost}) in the background, and pages show a “not yet translated” notice until their turn comes.",
+        "activateBody": "{language} goes live at once. About {characters} characters (estimated {cost}) are translated in the background, and pages show a “not yet translated” notice until their turn comes.",
         "activateBudget": "This month's budget has {remaining} characters left; work pauses at the limit and resumes next month.",
         "offNote": "Automatic translation is switched off under Provider, so no content will be translated until it is switched on.",
         "deactivateTitle": "Switch {language} off?",
@@ -1048,7 +1068,7 @@
           "siteTextDone": "The risk disclaimer and copyright line are translated.",
           "siteTextMissing": "{count, plural, one {# legal line needs a person's translation.} other {# legal lines need a person's translation.}}",
           "siteTextAction": "Write site text",
-          "googleHint": "On the Interface text screen, “Translate missing with Google” fills up to 200 strings each time you press it. Legal text is never machine-translated.",
+          "googleHint": "On the Interface text screen, “Translate missing automatically” fills up to 200 strings each time you press it. Legal text is never machine-translated.",
           "close": "Close"
         },
         "hidden": "Hidden"
@@ -1119,7 +1139,7 @@
         "states": {
           "shipped": "Shipped",
           "edited": "Edited",
-          "machine": "Google",
+          "machine": "Machine",
           "missing": "Missing"
         },
         "missingValue": "Not translated: readers see the English.",
@@ -1144,10 +1164,10 @@
           "tagsDiffer": "Keep the same tags in angle brackets as the English, with the same names.",
           "isDefault": "English is the source language and is not machine-translated."
         },
-        "fill": "Translate missing with Google",
-        "fillTitle": "Translate missing text with Google?",
-        "fillBody": "Up to {limit} missing strings are sent to Google and saved as Google translations, which you can then review and edit. Strings someone has written are never replaced. This uses the translation budget.",
-        "filled": "{translated, plural, one {# string translated.} other {# strings translated.}} {remaining, plural, =0 {Nothing left for Google.} other {# still missing; run it again to continue.}}",
+        "fill": "Translate missing automatically",
+        "fillTitle": "Translate missing text automatically?",
+        "fillBody": "Up to {limit} missing strings are sent to the translation provider and saved as machine translations, which you can then review and edit. Strings someone has written are never replaced. This uses the translation budget.",
+        "filled": "{translated, plural, one {# string translated.} other {# strings translated.}} {remaining, plural, =0 {Nothing left to translate.} other {# still missing; run it again to continue.}}",
         "fillFailed": "{failed, plural, one {# string could not be translated and is still missing.} other {# strings could not be translated and are still missing.}}",
         "fillManual": "{manual, plural, one {# string must be written by hand.} other {# strings must be written by hand.}}",
         "noLanguages": "No language has been added yet."

@@ -1,8 +1,8 @@
-// Metering (ADR-160 #6). One `TranslateUsage` row per request to Google or
-// refusal before one; the budget month is a single row incremented
+// Metering (ADR-160 #6). One `TranslateUsage` row per request to the
+// provider or refusal before one; the budget month is a single row incremented
 // atomically. No text is ever stored — a count, never the content.
 import { db } from "@repo/db";
-import type { TranslateReason } from "@repo/contracts";
+import type { TranslateProviderKindName, TranslateReason } from "@repo/contracts";
 
 export type UsageStatus = "OK" | "FAILED" | "REFUSED";
 export type UsageFormat = "TEXT" | "HTML";
@@ -28,11 +28,13 @@ export function microsToUsd(micros: number): string {
 export interface UsageRecord {
   status: UsageStatus;
   reason?: TranslateReason | null;
+  /** The service called (ADR-186 #6); absent for a refusal before one was loaded. */
+  provider?: TranslateProviderKindName | null;
   sourceLocale: string;
   targetLocale: string;
   format: UsageFormat;
   segments: number;
-  /** What was sent. Zero for a refusal: nothing reached Google. */
+  /** What was sent. Zero for a refusal: nothing reached the provider. */
   characters: number;
   pricePerMillionChars: number;
   durationMs: number;
@@ -44,7 +46,7 @@ export interface UsageRecord {
 
 /**
  * Writes the row and, for a billed request, adds it to the budget month.
- * Only `OK` is billed: Google does not charge a request it refused.
+ * Only `OK` is billed: no provider charges a request it refused.
  */
 export async function recordUsage(record: UsageRecord): Promise<void> {
   const billed = record.status === "OK";
@@ -55,6 +57,7 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
     data: {
       status: record.status,
       reason: record.reason ?? null,
+      provider: record.provider ?? null,
       sourceLocale: record.sourceLocale,
       targetLocale: record.targetLocale,
       format: record.format,

@@ -27964,3 +27964,219 @@ not checked.
 
 Not done: a deploy, the Cloudflare setting, and a re-check of the reporter's
 console.
+
+## 2026-10-05 — Module 06/09: DeepL as a second translation provider (ADR-186)
+
+The owner asked to translate with the DeepL API rather than Google Cloud
+Translation. ADR-186 amends ADR-160: one provider at a time, chosen in the
+admin.
+
+**Why it was small.** Everything above the driver was already
+provider-neutral. ICU arguments and glossary terms travel as
+`<span translate="no">`, and DeepL's HTML mode skips such elements just as
+Google's does. The job queue, budget, number check and review statuses never
+see the vendor. DeepL's language list (checked today) covers all 28
+`SUPPORTED_LOCALES`, so there is no per-language fallback to Google.
+
+**What shipped.**
+- `TranslateProvider.kind` (`GOOGLE | DEEPL`, default `GOOGLE`, so an
+  existing install is unchanged). The one sealed key belongs to that kind.
+  A provider change needs the new provider's key in the same save
+  (`keyRequired` otherwise), and a stored key is never sent to the other
+  provider: `loadTranslateDriver` refuses a `kind` that differs from the
+  row's unless a key is typed.
+- `deepl.ts` beside `google.ts`. The endpoint is fixed in code, with Free or
+  Pro chosen by the key's `:fx` suffix. The key goes in the `Authorization`
+  header. Codes are mapped in the driver: `en`→`EN-US`, `pt`→`PT-BR`,
+  `zh`→`ZH-HANS`, others upper-cased. HTTP statuses map onto the existing
+  reasons; 456 is `quota_exceeded`, which pauses.
+- Shared driver types moved to `driver.ts`. Each driver now declares its batch
+  limits (DeepL 50 texts, Google 128), and the door batches by them.
+- `TranslateUsage.provider` (nullable). The migration backfills past
+  OK/FAILED rows to `GOOGLE`; refusals before a provider loaded stay null.
+- `getAutoTranslateProvider()` returns the active kind;
+  `isAutoTranslateAvailable()` is the boolean over it.
+- Provider tab: a provider picker (`AdminCombobox`). The key label, hint and
+  price hint follow the chosen provider, the price field is pre-filled with
+  that provider's list price on change ($20 Google, $25 DeepL;
+  `TRANSLATE_PROVIDER_LIST_PRICE`), and the hint says when the saved key
+  belongs to the other provider.
+- Copy: the editors' button reads "Translate from en with {provider}".
+  Reasons, the review states, the interface-text fill and the go-live text no
+  longer say "Google".
+- security.md #10's ADR-160 paragraph, `.env.example`, `deploy.md`, the i18n
+  skill and the CLAUDE.md row note the second provider. It is the same seal,
+  not a sixth.
+
+**Tests.**
+- `@repo/translate` 135/135 including the Testcontainers suite, which applies
+  the new migration. New: `deepl.test.ts` (host choice, header, code mapping
+  for every routable locale, HTML mode, batch limit, error mapping) and four
+  integration cases (no switch without a key, switch then translate through
+  DeepL with usage and audit rows, a rejected key keeps Google, 456 pauses).
+- `@repo/contracts` translate suite 13/13.
+- `@repo/core` `translation-admin` and `languages` integration pass.
+  `article-translation` has 1 failure, "gives the Spanish row its own slug",
+  which expects per-language slugs that ADR-181 replaced on 2026-10-02. That
+  is not this change: the test calls no provider code.
+- `apps/web` 3455/3462. The 7 failures are the same ones recorded under
+  changes-62 (`site-url` ×5, `changes-50-fixes`, `email-admin-conventions`).
+- `tsc` is clean on translate, core and web. ESLint and Prettier are clean on
+  touched files. `check:phantom-deps`, `check:catalog-completeness` and
+  `governance:check` are OK.
+
+**Not done.**
+- No browser check. The local dev server on :3000 answers 500 on every route
+  and needs a restart after the Prisma client was regenerated.
+- No call to the real DeepL API (no key here).
+- Nothing on production, which still lacks `TRANSLATE_SECRET_KEY` and the
+  `/api/cron/translate` schedule.
+
+## 2026-10-05 — Module 09: changes-65 (breadcrumb root, notification bell, live speed)
+
+**Breadcrumbs.** Every admin trail began with "Keystone": the `/keystone` root
+segment was humanised into a crumb linking to the staff sign-in.
+`breadcrumbs.tsx` drops the root segment before labelling. Each crumb's href
+still carries the full `/keystone/…` path. The stale `admin: "dashboard"` key
+(pre-ADR-151) is now `dashboard: "dashboard"`. Every other crumb is unchanged.
+
+**Notifications (ADR-014).** From reading the code, the paths are intact: rows are written for role
+assigned/removed, admin password reset, employee status and AI budget
+thresholds, and the bell lists them, marks one read and marks all read. The
+fault was freshness. `AdminShell` is rendered by the admin LAYOUT, which a
+client navigation does not re-render, so the count the first load drew stayed
+until a hard reload. A role assigned while you were in the portal never
+appeared. The bell now re-reads its feed from the new
+`GET /keystone/api/notifications` after each navigation and when it is opened,
+and marks read optimistically. There is deliberately no timer: a request is
+session activity, and polling would keep an idle tab alive past ADR-105's
+timeout. The shell and the endpoint word rows through one loader
+(`notification-items.ts`). This is what ADR-014 already described ("revalidated
+by the reader's own navigation"), so no new ADR.
+
+**Live speed (diagnosis, nothing changed on the server).**
+- The origin is fast: 15–90 ms TTFB on :3003.
+- Through Cloudflare from the owner's region, HTML TTFB is 1.6–1.8 s. A
+  CF-cached chunk returns in 0.7 s. The difference is the Singapore edge →
+  Netherlands origin trip, which every HTML request makes.
+- HTML is never edge-cached (`cf-cache-status: DYNAMIC`). Cloudflare does not
+  cache HTML by default, even though `/learn`, `/tools`, `/glossary` and
+  `/support` already send `s-maxage=300`.
+- `/` is `private, no-store` because of `connection()` in the promotions band.
+  `/news` is too, because it reads `searchParams`.
+- Brotli makes the 600 KB home HTML 66 KB on the wire, so size is not the
+  cause.
+- The server is 4.6 GB into swap with pm2 `mbx` at ~890 MB.
+- Suggested, in order:
+  1. A Cloudflare Cache Rule that caches eligible HTML, respects the origin's
+     headers and bypasses when the auth session cookie is present.
+  2. Move the home promotions window to a short `cacheLife` instead of
+     `connection()`.
+  3. Argo / Tiered Cache, or an origin nearer the audience.
+  4. Look into the swap use.
+
+**Tests.**
+- `app/changes-65.test.ts` (new, 5) and a breadcrumb block in
+  `admin-page-conventions.test.ts` (2).
+- The new route is in the learner probe list, and `date-format.test.ts`'s
+  allowlist follows the moved `toISOString`.
+- `apps/web` 3462/3469: the 7 failures are the ones recorded under changes-62.
+- `tsc`, ESLint and Prettier are clean on touched files.
+
+**Not done.**
+- No browser check: the local dev server needs a restart, see the previous
+  entry.
+- No production DB read of `Notification` rows (blocked in this session).
+- No cross-browser run.
+- No deploy.
+
+## 2026-10-05 — Module 12/06: the language switcher shows a globe, a flag and the code
+
+The owner asked for the public language selector to read as a globe icon
+with a short code like "EN" and a flag.
+
+**What shipped.**
+- `LocaleSwitcher` (`_components/locale-switcher.tsx`): the trigger is a
+  globe, the current language's flag and its code ("EN", "AR"), at every
+  width. The native name used to appear only from 2xl up, because the full
+  name pushed the end cluster off a 1280px row; the code is short enough to
+  stay. Each menu row shows flag, native name (with its own `lang`), code,
+  and a check plus `aria-current` on the current language. The accessible
+  name is "Language EN" (an sr-only catalog string plus the visible code), so
+  the visible text is part of the name and `rtl-smoke.spec.ts`'s
+  `/language/i` locator still matches. No new catalog keys.
+- **The flag is an image, not the emoji.** Windows draws no flag emoji
+  (Chrome and Edge there show "GB"). The admin-typed emoji is read as its
+  region by the new `flagEmojiToRegion` (`@repo/utils`), including the
+  England/Scotland/Wales tag sequences. It is drawn from
+  `public/flags/<region>.svg`, flag-icons 7.5.0's 4:3 set (MIT, the licence
+  beside it, all 271 so that any flag an admin picks resolves). The files
+  were checked for scripts and external references; none. An emoji that names
+  no region renders as itself, and no emoji renders nothing. A browser
+  fetches only the flags it draws, most under 1 KB, and the proxy matcher
+  skips dotted paths, so they are served as static files.
+
+**Tests.** `flag-emoji.test.ts` (3); `radius-scale`, `grid-base` and
+`public-chrome` pass; ESLint, Prettier and `tsc` are clean. Playwright against
+the local dev server (en + ar active):
+- `/support` at 1280px in en and ar: the trigger reads globe, flag, code; the
+  menu lists both languages with the current one checked; the ar header
+  mirrors correctly.
+- `/support` at 375px: the trigger fits.
+- No horizontal overflow in any of the three, and the flags draw on Windows
+  Chromium.
+
+## 2026-10-05 — Module 12: the language switcher drops the flag
+
+The owner asked for the flag to be removed, the same day. The trigger is a
+globe and the code ("EN", "AR"); each menu row is the native name, the code
+and the current-language check. Deleted with it, because nothing reads them
+any more: the vendored `public/flags` set and `flagEmojiToRegion`
+(`@repo/utils`) with its test. `Locale.flagEmoji` is unchanged and still
+editable; the public switcher simply does not draw it.
+
+**Tests.** ESLint and Prettier are clean. Playwright against the local dev
+server: `/support` at 1280px in en and ar and at 375px, the trigger reads
+"Language EN" / "اللغة AR" as its accessible name, with no horizontal
+overflow.
+
+## 2026-10-05 — Module 06/09: five offered languages (ADR-188)
+
+The owner set the site's languages to English, Arabic, Urdu, Hindi and
+Chinese, with every other language hidden.
+
+**Decision.** ADR-188 narrows ADR-178 #1 at the admin, not at routing.
+`OFFERED_LOCALE_CODES` (`@repo/i18n/routing`) is `en, ar, ur, hi, zh`.
+Settings → Translation → Languages → Add lists only those, and
+`createLocale` refuses any other code as `unsupported`. `routing.locales`
+keeps all 28 codes, because cutting it would make `/es` fall through
+`[...slug]` instead of answering 404, and about forty test files use `es` as
+their second language. An inactive locale is already absent from the public
+site (ADR-091).
+
+**Seed.** It creates `ur`, `ar`, `hi`, `zh` (off) and no longer `es`: the seed
+runs on every deploy (ADR-183), so seeding Spanish would recreate a deleted
+row. Rows outside the set are not deleted by code. The Languages tab's
+Delete removes them, under its guards.
+
+**Data.**
+- Local: `fr` deleted, `hi` and `zh` added, through the real services.
+  `es` is refused deletion locally (`hasContent`, 2 local article
+  translations).
+- Production (read-only check): `en`, `ar` live, `ur`, `es` off, and `es`
+  holds no content, so Delete will remove it. Its `hi` and `zh` rows arrive
+  with the next deploy's seed.
+
+**Not done: Urdu, Hindi and Chinese are not live.** The gate (ADR-163) needs
+all 1,448 public interface strings and the legal site text first. Urdu has
+378, and Hindi and Chinese have none. Filling them is Interface text →
+"Translate missing automatically" (200 strings a press, roughly 46k characters
+per language, within DeepL Free's monthly allowance), then Site text by a
+person, then the Live switch. Once a language is live, `ENFORCED_LOCALES`
+should gain it in the same PR (code-style.md #2).
+
+**Tests.** `routing.test.ts` +2 (the five, all routable; `es`/`fr` hidden).
+`languages.integration.test.ts` now runs its CRUD on offered codes
+(hi/ur/zh) and asserts that a routable-but-unoffered `fr` is refused and
+never listed. With `translation-admin`, 20/20 against MariaDB. `tsc` is clean
+on core and i18n.

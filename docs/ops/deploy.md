@@ -76,7 +76,7 @@ same care as the database.
 | `MARKET_SECRET_KEY`    | the market data API key (`MarketProvider`)                          |
 | `AI_SECRET_KEY`        | the AI provider API key (`AiProvider`)                              |
 | `CAPTCHA_SECRET_KEY`   | Google's reCAPTCHA secret key (`CaptchaConfig`, ADR-156)            |
-| `TRANSLATE_SECRET_KEY` | the Google Cloud Translation API key (`TranslateProvider`, ADR-160) |
+| `TRANSLATE_SECRET_KEY` | the translation provider's API key, Google Cloud Translation or DeepL (`TranslateProvider`, ADR-160, ADR-186) |
 
 **Scheduled jobs**
 
@@ -543,3 +543,65 @@ curl -s --http2 -D - -o /dev/null https://example.com/some-page | grep -iE '^(HT
 
 Run it twice. A `HTTP/2 103` line on the second run means Cloudflare is still
 replaying hints.
+
+## 12. Edge caching (Cloudflare)
+
+Added 2026-10-05 (changes-65, ADR-187). The origin answers a page in 15–90 ms.
+A reader far from it waits about a second more, because every HTML request
+crosses from their Cloudflare edge to the origin: Cloudflare does not cache
+HTML unless a rule tells it to. Public pages already send
+`Cache-Control: s-maxage=300, stale-while-revalidate=…`, and since ADR-187 the
+home page does too. One rule lets the edge serve them.
+
+**Caching → Cache Rules → Create rule**
+
+- Name: `HTML — respect origin`
+- When incoming requests match (custom filter expression):
+
+  ```
+  (http.host eq "learn.mbxpro.com"
+   and http.request.method in {"GET" "HEAD"}
+   and not starts_with(http.request.uri.path, "/keystone")
+   and not starts_with(http.request.uri.path, "/admin")
+   and not starts_with(http.request.uri.path, "/api")
+   and not starts_with(http.request.uri.path, "/uploads"))
+  ```
+
+- Then: Cache eligibility **Eligible for cache**. Edge TTL **Use cache-control
+  header if present, bypass cache if not**. Browser TTL **Respect origin**.
+  Leave the cache key at its default, with the query string included, so
+  `?page=2` and Next's `?_rsc=` requests stay separate entries.
+
+**Why this is safe here**
+
+- A page that varies per request already says so. `/news` (search and
+  paging), the admin, and every API send `private, no-store`, and the rule
+  respects that.
+- An unprefixed address such as `/news` redirects by language (cookie,
+  `Accept-Language`, the admin's default). The proxy marks every such 307
+  `private, no-store` (changes-65), so the edge never replays one reader's
+  language to the next. The English answer to an unprefixed address carries
+  `Set-Cookie: NEXT_LOCALE`, which Cloudflare never caches.
+- The public pages read no session on the server (ADR-056 #1, ADR-094). A
+  signed-in learner gets the same HTML and their state arrives from
+  `/api/auth/get-session`, which is not cached.
+
+**Check it** after a deploy:
+
+```bash
+for i in 1 2; do curl -sI https://learn.mbxpro.com/tools | grep -iE 'cf-cache-status|cache-control'; done
+curl -sI -H 'Accept-Language: ar' https://learn.mbxpro.com/news | grep -iE '^HTTP|cache-control|location'
+```
+
+The second `/tools` request should say `cf-cache-status: HIT`. The redirect
+must show `private, no-store`.
+
+**Further, optional.** Tiered Cache (Caching → Tiered Cache, free) lets edges
+fill from a regional upper tier rather than from the origin. Argo Smart
+Routing (paid) shortens the edge→origin trip for whatever stays uncached.
+Moving the origin nearer the readers does both, at the cost of a migration.
+
+**The host's swap.** On 2026-10-05 the server was 4.6 GB into swap. The `mbx`
+process was not among the swapped: the large users were other tenants' MariaDB
+instances, another site's Next server and Java services. That is a question
+for whoever runs the box, not for this app.

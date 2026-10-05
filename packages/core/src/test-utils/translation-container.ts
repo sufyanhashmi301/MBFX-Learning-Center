@@ -88,6 +88,7 @@ export async function startTranslationTestDb(
 
   server.use(fakeGoogleTranslate({ validKey: FAKE_KEY }).handler);
   const saved = await translate.saveTranslateSettings(user.id, {
+    kind: "GOOGLE",
     enabled: true,
     apiKey: FAKE_KEY,
     pricePerMillionChars: 20,

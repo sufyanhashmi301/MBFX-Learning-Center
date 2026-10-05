@@ -138,6 +138,8 @@ const ADMIN_HANDLERS: {
   // a learner's session must not learn its own expiry through the admin.
   { path: "/keystone/api/session", method: "GET" },
   { path: "/keystone/api/session/activity", method: "GET" },
+  // changes-65: the bell's own feed. Self-scoped, no permission key, STAFF-only.
+  { path: "/keystone/api/notifications", method: "GET" },
   {
     // POST, not GET — the body is an unsaved draft (ADR-078 #8).
     path: "/keystone/api/email/preview",

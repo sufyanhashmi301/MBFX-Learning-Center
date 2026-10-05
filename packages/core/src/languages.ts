@@ -8,7 +8,7 @@
 // the change at once.
 import { db, type Prisma } from "@repo/db";
 import { invalidateActiveLocales, invalidateMessages } from "@repo/i18n";
-import { supportedLocale } from "@repo/i18n/routing";
+import { isOfferedLocale, supportedLocale } from "@repo/i18n/routing";
 import type { LocaleDeleteInput, LocaleSaveInput } from "@repo/contracts";
 
 import { recordAudit } from "./index.ts";
@@ -78,8 +78,7 @@ export type LocaleDeleteRefusal = "notFound" | "isDefault" | "isActive" | "hasCo
 
 export type LocaleSaveResult = { ok: true } | { ok: false; reason: LocaleSaveRefusal };
 export type LocaleDeleteResult =
-  | { ok: true }
-  | { ok: false; reason: LocaleDeleteRefusal; contentRows?: number };
+  { ok: true } | { ok: false; reason: LocaleDeleteRefusal; contentRows?: number };
 
 /** A fallback must be another existing language, never the language itself. */
 async function fallbackIsValid(code: string, fallbackCode: string | null): Promise<boolean> {
@@ -108,7 +107,8 @@ export async function createLocale(
   input: LocaleSaveInput,
 ): Promise<LocaleSaveResult> {
   const supported = supportedLocale(input.code);
-  if (!supported) return { ok: false, reason: "unsupported" };
+  // ADR-188: routable is not enough; the language must be one the owner offers.
+  if (!supported || !isOfferedLocale(input.code)) return { ok: false, reason: "unsupported" };
   if ((await db.locale.count({ where: { code: input.code } })) > 0) {
     return { ok: false, reason: "exists" };
   }

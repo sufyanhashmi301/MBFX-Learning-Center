@@ -19,7 +19,7 @@ import {
 
 /** Catalog keys for the static admin segments; dynamic ids fall through. */
 const SEGMENT_KEYS: Record<string, string> = {
-  admin: "dashboard",
+  dashboard: "dashboard",
   users: "users",
   roles: "roles",
   employees: "employees",
@@ -58,6 +58,14 @@ const NESTED_SEGMENT_KEYS: Record<string, Record<string, string>> = {
  */
 const GROUP_SEGMENTS = new Set(["learn"]);
 
+/**
+ * The portal's root segment (ADR-151). It is never a crumb (changes-65): it
+ * is the staff sign-in, not a place a staff member navigates back to, and
+ * every page under it already sits in the portal. The trail starts at the
+ * section, and its links still carry the full `/keystone/…` path.
+ */
+const ROOT_SEGMENT = "keystone";
+
 /** A cuid/uuid-shaped segment: an id, not a word — never humanised. */
 const ID_SEGMENT = /^[a-z0-9]{20,}$|^[0-9a-f-]{32,}$/i;
 
@@ -68,7 +76,9 @@ const ID_SEGMENT = /^[a-z0-9]{20,}$|^[0-9a-f-]{32,}$/i;
 export function AdminBreadcrumbs() {
   const pathname = usePathname();
   const t = useTranslations("admin");
-  const segments = pathname.split("/").filter(Boolean);
+  const all = pathname.split("/").filter(Boolean);
+  const base = all[0] === ROOT_SEGMENT ? 1 : 0;
+  const segments = all.slice(base);
 
   const labelFor = (segment: string, parent: string | undefined) => {
     const key = (parent && NESTED_SEGMENT_KEYS[parent]?.[segment]) ?? SEGMENT_KEYS[segment];
@@ -81,7 +91,7 @@ export function AdminBreadcrumbs() {
     <Breadcrumb aria-label={t("breadcrumbLabel")}>
       <BreadcrumbList className="flex-nowrap overflow-x-auto whitespace-nowrap">
         {segments.map((segment, index) => {
-          const href = `/${segments.slice(0, index + 1).join("/")}`;
+          const href = `/${all.slice(0, base + index + 1).join("/")}`;
           const label = labelFor(segment, segments[index - 1]);
           return (
             <Fragment key={href}>

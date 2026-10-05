@@ -32,10 +32,10 @@ let translate: typeof TranslateModule;
 let userId: string;
 const server = setupServer();
 
-const french = {
-  code: "fr",
-  name: "French",
-  nativeName: "Français",
+const hindi = {
+  code: "hi",
+  name: "Hindi",
+  nativeName: "हिन्दी",
   flagEmoji: "",
   fallbackCode: "en",
   sortOrder: 5,
@@ -90,6 +90,7 @@ beforeAll(async () => {
   server.use(fakeGoogleTranslate({ validKey: KEY }).handler);
   expect(
     await translate.saveTranslateSettings(user.id, {
+      kind: "GOOGLE",
       enabled: true,
       apiKey: KEY,
       pricePerMillionChars: 20,
@@ -109,35 +110,41 @@ afterEach(() => server.resetHandlers());
 
 describe("language CRUD (ADR-178 #2)", () => {
   it("adds a registry language switched off, with the registry's direction", async () => {
-    expect(await languages.createLocale(userId, french)).toEqual({ ok: true });
-    const row = await db.locale.findUniqueOrThrow({ where: { code: "fr" } });
+    expect(await languages.createLocale(userId, hindi)).toEqual({ ok: true });
+    const row = await db.locale.findUniqueOrThrow({ where: { code: "hi" } });
     expect(row).toMatchObject({ isActive: false, isDefault: false, direction: "LTR" });
     expect(row.flagEmoji).toBeNull();
 
     expect(
       await languages.createLocale(userId, {
-        ...french,
-        code: "fa",
-        name: "Persian",
+        ...hindi,
+        code: "ur",
+        name: "Urdu",
         fallbackCode: null,
       }),
     ).toEqual({ ok: true });
-    expect((await db.locale.findUniqueOrThrow({ where: { code: "fa" } })).direction).toBe("RTL");
+    expect((await db.locale.findUniqueOrThrow({ where: { code: "ur" } })).direction).toBe("RTL");
   });
 
   it("refuses a code outside the registry, a duplicate, and a bad fallback", async () => {
-    expect(await languages.createLocale(userId, { ...french, code: "xx" })).toEqual({
+    expect(await languages.createLocale(userId, { ...hindi, code: "xx" })).toEqual({
       ok: false,
       reason: "unsupported",
     });
-    expect(await languages.createLocale(userId, french)).toEqual({
+    // ADR-188: routable but not one of the owner's five.
+    expect(await languages.createLocale(userId, { ...hindi, code: "fr" })).toEqual({
+      ok: false,
+      reason: "unsupported",
+    });
+    expect(await db.locale.count({ where: { code: "fr" } })).toBe(0);
+    expect(await languages.createLocale(userId, hindi)).toEqual({
       ok: false,
       reason: "exists",
     });
     expect(
-      await languages.createLocale(userId, { ...french, code: "de", fallbackCode: "pt" }),
+      await languages.createLocale(userId, { ...hindi, code: "zh", fallbackCode: "pt" }),
     ).toEqual({ ok: false, reason: "invalidFallback" });
-    expect(await languages.updateLocale(userId, { ...french, fallbackCode: "fr" })).toEqual({
+    expect(await languages.updateLocale(userId, { ...hindi, fallbackCode: "hi" })).toEqual({
       ok: false,
       reason: "invalidFallback",
     });
@@ -146,20 +153,20 @@ describe("language CRUD (ADR-178 #2)", () => {
   it("edits names, flag, fallback and order, and audits it", async () => {
     expect(
       await languages.updateLocale(userId, {
-        ...french,
-        nativeName: "Le français",
-        flagEmoji: "🇫🇷",
+        ...hindi,
+        nativeName: "हिंदी",
+        flagEmoji: "🇮🇳",
         fallbackCode: null,
         sortOrder: 9,
       }),
     ).toEqual({ ok: true });
-    expect(await db.locale.findUniqueOrThrow({ where: { code: "fr" } })).toMatchObject({
-      nativeName: "Le français",
-      flagEmoji: "🇫🇷",
+    expect(await db.locale.findUniqueOrThrow({ where: { code: "hi" } })).toMatchObject({
+      nativeName: "हिंदी",
+      flagEmoji: "🇮🇳",
       fallbackCode: null,
       sortOrder: 9,
     });
-    expect(await db.auditLog.count({ where: { action: "locales.update", entityId: "fr" } })).toBe(
+    expect(await db.auditLog.count({ where: { action: "locales.update", entityId: "hi" } })).toBe(
       1,
     );
   });
@@ -174,12 +181,12 @@ describe("language CRUD (ADR-178 #2)", () => {
       reason: "notFound",
     });
 
-    await db.locale.update({ where: { code: "fa" }, data: { isActive: true } });
-    expect(await languages.deleteLocale(userId, { locale: "fa" })).toEqual({
+    await db.locale.update({ where: { code: "ur" }, data: { isActive: true } });
+    expect(await languages.deleteLocale(userId, { locale: "ur" })).toEqual({
       ok: false,
       reason: "isActive",
     });
-    await db.locale.update({ where: { code: "fa" }, data: { isActive: false } });
+    await db.locale.update({ where: { code: "ur" }, data: { isActive: false } });
 
     const setting = await db.setting.findFirst({ select: { id: true } });
     const settingId =
@@ -189,44 +196,47 @@ describe("language CRUD (ADR-178 #2)", () => {
           data: { key: "test.words", groupName: "general", label: "Words", value: "Hello" },
         })
       ).id;
-    await db.settingTranslation.create({ data: { settingId, locale: "fa", value: "سلام" } });
-    expect(await languages.deleteLocale(userId, { locale: "fa" })).toEqual({
+    await db.settingTranslation.create({ data: { settingId, locale: "ur", value: "سلام" } });
+    expect(await languages.deleteLocale(userId, { locale: "ur" })).toEqual({
       ok: false,
       reason: "hasContent",
       contentRows: 1,
     });
-    expect((await languages.countContentByLocale()).get("fa")).toBe(1);
-    expect(await db.locale.count({ where: { code: "fa" } })).toBe(1);
+    expect((await languages.countContentByLocale()).get("ur")).toBe(1);
+    expect(await db.locale.count({ where: { code: "ur" } })).toBe(1);
   });
 
   it("deletes a language with its overrides and clears fallbacks that pointed at it", async () => {
     await languages.createLocale(userId, {
-      ...french,
-      code: "de",
-      name: "German",
-      nativeName: "Deutsch",
+      ...hindi,
+      code: "zh",
+      name: "Chinese (Simplified)",
+      nativeName: "简体中文",
       fallbackCode: null,
     });
-    await db.locale.update({ where: { code: "es" }, data: { fallbackCode: "de" } });
+    await db.locale.update({ where: { code: "es" }, data: { fallbackCode: "zh" } });
     await db.messageOverride.create({
-      data: { locale: "de", key: "learn.difficulty.BEGINNER", value: "Anfänger" },
+      data: { locale: "zh", key: "learn.difficulty.BEGINNER", value: "Anfänger" },
     });
 
-    expect(await languages.deleteLocale(userId, { locale: "de" })).toEqual({ ok: true });
-    expect(await db.locale.count({ where: { code: "de" } })).toBe(0);
-    expect(await db.messageOverride.count({ where: { locale: "de" } })).toBe(0);
+    expect(await languages.deleteLocale(userId, { locale: "zh" })).toEqual({ ok: true });
+    expect(await db.locale.count({ where: { code: "zh" } })).toBe(0);
+    expect(await db.messageOverride.count({ where: { locale: "zh" } })).toBe(0);
     expect((await db.locale.findUniqueOrThrow({ where: { code: "es" } })).fallbackCode).toBeNull();
-    expect(await db.auditLog.count({ where: { action: "locales.delete", entityId: "de" } })).toBe(
+    expect(await db.auditLog.count({ where: { action: "locales.delete", entityId: "zh" } })).toBe(
       1,
     );
   });
 
   it("lists what can still be added, and every row as a fallback choice", async () => {
     const view = await admin.loadLanguagesView();
-    expect(view.available.map((l) => l.code)).toContain("de");
+    expect(view.available.map((l) => l.code)).toContain("zh");
+    // ADR-188: only the offered languages are ever listed to add.
     expect(view.available.map((l) => l.code)).not.toContain("fr");
-    expect(view.all.map((l) => l.code)).toEqual(expect.arrayContaining(["en", "es", "fr", "fa"]));
-    expect(view.rows.find((r) => r.code === "fa")?.contentRows).toBe(1);
+    expect(view.available.every((l) => ["en", "ar", "ur", "hi", "zh"].includes(l.code))).toBe(true);
+    expect(view.available.map((l) => l.code)).not.toContain("hi");
+    expect(view.all.map((l) => l.code)).toEqual(expect.arrayContaining(["en", "es", "hi", "ur"]));
+    expect(view.rows.find((r) => r.code === "ur")?.contentRows).toBe(1);
   });
 });
 
@@ -236,11 +246,11 @@ describe("interface text (ADR-178 #3–#5)", () => {
   it("refuses an admin key, an unknown key, an unknown language and a broken message", async () => {
     const save = (locale: string, key: string, value: string) =>
       text.saveInterfaceText(userId, { locale, key, value });
-    expect(await save("fr", "admin.save", "Enregistrer")).toEqual({
+    expect(await save("hi", "admin.save", "Enregistrer")).toEqual({
       ok: false,
       reason: "adminKey",
     });
-    expect(await save("fr", "learn.nope.never", "x")).toEqual({
+    expect(await save("hi", "learn.nope.never", "x")).toEqual({
       ok: false,
       reason: "unknownKey",
     });
@@ -248,22 +258,22 @@ describe("interface text (ADR-178 #3–#5)", () => {
       ok: false,
       reason: "unknownLocale",
     });
-    expect(await save("fr", KEY_BEGINNER, "Débutant {")).toEqual({
+    expect(await save("hi", KEY_BEGINNER, "Débutant {")).toEqual({
       ok: false,
       reason: "invalidSyntax",
     });
-    expect(await db.messageOverride.count({ where: { locale: "fr" } })).toBe(0);
+    expect(await db.messageOverride.count({ where: { locale: "hi" } })).toBe(0);
   });
 
   it("saves, shows and resets one string, and the gate counts it", async () => {
-    const before = await i18n.publicCatalogGaps("fr");
+    const before = await i18n.publicCatalogGaps("hi");
     expect(
-      await text.saveInterfaceText(userId, { locale: "fr", key: KEY_BEGINNER, value: "Débutant" }),
+      await text.saveInterfaceText(userId, { locale: "hi", key: KEY_BEGINNER, value: "Débutant" }),
     ).toEqual({ ok: true });
-    expect((await i18n.publicCatalogGaps("fr"))!.length).toBe(before!.length - 1);
-    expect(await i18n.catalogMessage("fr", KEY_BEGINNER)).toBe("Débutant");
+    expect((await i18n.publicCatalogGaps("hi"))!.length).toBe(before!.length - 1);
+    expect(await i18n.catalogMessage("hi", KEY_BEGINNER)).toBe("Débutant");
 
-    const view = await text.loadInterfaceText("fr", "learn");
+    const view = await text.loadInterfaceText("hi", "learn");
     expect(view.namespace).toBe("learn");
     expect(view.rows.find((r) => r.key === KEY_BEGINNER)).toEqual({
       key: KEY_BEGINNER,
@@ -274,8 +284,8 @@ describe("interface text (ADR-178 #3–#5)", () => {
     expect(view.rows.every((r) => r.key.startsWith("learn."))).toBe(true);
     expect(view.namespaces.some((n) => n.name === "admin" || n.name === "cms")).toBe(false);
 
-    await text.resetInterfaceText(userId, { locale: "fr", key: KEY_BEGINNER });
-    expect(await i18n.catalogMessage("fr", KEY_BEGINNER)).toBe("Beginner");
+    await text.resetInterfaceText(userId, { locale: "hi", key: KEY_BEGINNER });
+    expect(await i18n.catalogMessage("hi", KEY_BEGINNER)).toBe("Beginner");
   });
 
   it("an English edit equal to the shipped text stores nothing", async () => {
@@ -287,24 +297,24 @@ describe("interface text (ADR-178 #3–#5)", () => {
 
   it("machine-fills missing keys in batches without overwriting a person's text", async () => {
     await text.saveInterfaceText(userId, {
-      locale: "fr",
+      locale: "hi",
       key: KEY_BEGINNER,
       value: "Débutant",
     });
     const google = fakeGoogleTranslate({ validKey: KEY });
     server.use(google.handler);
 
-    const first = await text.fillInterfaceText(userId, { locale: "fr" });
+    const first = await text.fillInterfaceText(userId, { locale: "hi" });
     if (!first.ok) throw new Error(first.reason);
     expect(first.translated).toBeGreaterThan(0);
     expect(first.translated + first.failed).toBeLessThanOrEqual(text.INTERFACE_TEXT_FILL_LIMIT);
     expect(google.calls.length).toBeGreaterThan(0);
 
-    const machine = await db.messageOverride.count({ where: { locale: "fr", isMachine: true } });
+    const machine = await db.messageOverride.count({ where: { locale: "hi", isMachine: true } });
     expect(machine).toBe(first.translated);
-    expect(await i18n.catalogMessage("fr", KEY_BEGINNER)).toBe("Débutant");
+    expect(await i18n.catalogMessage("hi", KEY_BEGINNER)).toBe("Débutant");
 
-    const second = await text.fillInterfaceText(userId, { locale: "fr" });
+    const second = await text.fillInterfaceText(userId, { locale: "hi" });
     if (!second.ok) throw new Error(second.reason);
     expect(second.remaining).toBeLessThan(first.remaining);
 
