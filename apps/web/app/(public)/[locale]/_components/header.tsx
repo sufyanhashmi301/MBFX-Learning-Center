@@ -75,6 +75,7 @@ export async function SiteHeader({ locale }: { locale: string }) {
           <MobileNav
             items={navItems}
             menuLabel={t("openMenu")}
+            locales={locales}
             brand={
               <BrandLogo
                 light={brandAssets.logo_light?.url ?? null}
@@ -94,7 +95,8 @@ export async function SiteHeader({ locale }: { locale: string }) {
               the middle is the one place it does not read as a third button.
               `inset-x-0 mx-auto w-fit` rather than `left-1/2` + a translate,
               because it is direction-neutral and leaves `transform` free for
-              the hover scale. */}
+              the hover scale. A phone gets the h-9 mark the menu sheet uses,
+              which leaves room either side for the end cluster. */}
           <Link
             href="/"
             className="flex shrink-0 items-center truncate transition-transform duration-(--duration-base) ease-(--ease-out-quint) hover:scale-103 max-xl:absolute max-xl:inset-x-0 max-xl:mx-auto max-xl:w-fit"
@@ -103,7 +105,7 @@ export async function SiteHeader({ locale }: { locale: string }) {
               light={brandAssets.logo_light?.url ?? null}
               dark={brandAssets.logo_dark?.url ?? null}
               alt={siteName ?? ""}
-              className="h-11"
+              className="h-9 sm:h-11"
               fallback={<span className="text-lg font-semibold tracking-tight">{siteName}</span>}
             />
           </Link>
@@ -114,7 +116,11 @@ export async function SiteHeader({ locale }: { locale: string }) {
               the registry and the server passes only serializable rows. */}
           <SiteNav items={navItems} ariaLabel={t("mainNavigation")} />
 
-          <div className="ms-auto flex items-center gap-2">
+          {/* `relative z-10`: below xl the logo is absolutely positioned, and a
+              positioned box paints over in-flow siblings — on a narrow phone
+              it covered the language globe and swallowed its taps. The
+              controls are what a reader needs to reach; they stay on top. */}
+          <div className="relative z-10 ms-auto flex items-center gap-1 sm:gap-2">
             {/* ADR-108: a real site-wide search, reachable with ⌘K from any
                 page. It used to be a magnifying glass linking to `/news` —
                 the article listing's own `q` filter, standing in for a

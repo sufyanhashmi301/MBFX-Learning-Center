@@ -493,6 +493,16 @@
       "calt" 1;
   }
 
+  /* A `type="search"` field draws the browser's own clear button (WebKit/
+     Blink only), on whichever side the engine picks. Our search fields draw
+     their own clear control where they want one, so the native one was a
+     second × beside ours. Escape still clears the field. */
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   /* Scrollbars (ADR-072, the reference's): thin, a pill thumb in the
      secondary-text ink at 30%, over a faint muted track. Tokens only, so
      both modes and any admin palette stay coherent. Firefox gets the

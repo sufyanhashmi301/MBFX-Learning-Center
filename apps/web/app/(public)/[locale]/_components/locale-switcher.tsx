@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@repo/ui/components/dropdown-menu";
+import { cn } from "@repo/ui/lib/utils";
 
 export interface SwitcherLocale {
   code: string;
@@ -23,7 +24,20 @@ function shortCode(code: string): string {
 }
 
 /** Only ACTIVE locales are offered (the dynamic half of routing.ts's static/dynamic trade-off) — the server passes them in. */
-export function LocaleSwitcher({ locales }: { locales: SwitcherLocale[] }) {
+export function LocaleSwitcher({
+  locales,
+  compactBelowSm = true,
+  onNavigate,
+}: {
+  locales: SwitcherLocale[];
+  /**
+   * The header's copy drops the visible code below sm, where the bar has no
+   * room for it. The mobile sheet's copy has a whole row and keeps it.
+   */
+  compactBelowSm?: boolean;
+  /** Called when a language is picked — the mobile sheet closes itself on it, as on every other row. */
+  onNavigate?: () => void;
+}) {
   const t = useTranslations("nav");
   const pathname = usePathname();
   const current = useLocale();
@@ -38,10 +52,28 @@ export function LocaleSwitcher({ locales }: { locales: SwitcherLocale[] }) {
           // width (the full name pushed the end cluster off the screen at
           // 1280px, Phase 6 RTL smoke). The accessible name is "Language EN",
           // so the visible code is part of it.
-          <Button variant="ghost" size="sm" className="gap-1.5">
-            <Globe data-icon="inline-start" aria-hidden />
+          // Below sm it is the globe alone in a 36px square: a phone's row
+          // also holds the hamburger, the centred logo, search and (signed
+          // in) the avatar, and the code was what pushed the cluster under
+          // the logo. The code stays in the accessible name there (sr-only),
+          // and the menu itself names every language in full. No
+          // `data-icon` on the glyph: the Button's `has-data-[icon]` padding
+          // outranks a responsive `px-0`, so the padding is stated here.
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("gap-1.5 ps-2.5", compactBelowSm && "max-sm:w-9 max-sm:px-0")}
+          >
+            <Globe aria-hidden className="size-4" />
             <span className="sr-only">{t("chooseLanguage")}</span>
-            <span className="text-xs font-semibold tracking-wide">{shortCode(current)}</span>
+            <span
+              className={cn(
+                "text-xs font-semibold tracking-wide",
+                compactBelowSm && "max-sm:sr-only",
+              )}
+            >
+              {shortCode(current)}
+            </span>
           </Button>
         }
       />
@@ -55,6 +87,7 @@ export function LocaleSwitcher({ locales }: { locales: SwitcherLocale[] }) {
                 <Link
                   href={pathname}
                   locale={locale.code}
+                  onClick={onNavigate}
                   aria-current={isCurrent ? "true" : undefined}
                   className="gap-2.5"
                 >

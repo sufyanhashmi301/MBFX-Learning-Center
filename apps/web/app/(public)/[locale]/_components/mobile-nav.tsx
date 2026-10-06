@@ -56,6 +56,7 @@ import {
   routeKeyForHref,
   type MegaResolvableItem,
 } from "../_nav/mega-menu.ts";
+import { LocaleSwitcher, type SwitcherLocale } from "./locale-switcher.tsx";
 import { ModeToggle } from "./mode-toggle.tsx";
 import { usePublicSession } from "./public-session.tsx";
 
@@ -199,9 +200,12 @@ export function MobileNav({
   items,
   menuLabel,
   brand,
+  locales = [],
 }: {
   items: MobileNavItem[];
   menuLabel: string;
+  /** Active locales; with two or more the sheet's top bar carries the language switcher. */
+  locales?: SwitcherLocale[];
   /** The header's own logo, so the open menu is visibly the same site. */
   brand?: React.ReactNode;
 }) {
@@ -250,6 +254,16 @@ export function MobileNav({
                 </Button>
               }
             />
+            {/* Language takes the opposite corner from the close button
+                (owner): the top inline END, where a reader looks for it on
+                the header bar behind the sheet. Absolutely placed for the
+                same reason as the close button — the logo stays centred. The
+                visible code stays, because the corner has room for it. */}
+            {locales.length > 1 && (
+              <div className="absolute end-5 top-1/2 -translate-y-1/2">
+                <LocaleSwitcher locales={locales} compactBelowSm={false} onNavigate={close} />
+              </div>
+            )}
           </SheetHeader>
 
           <nav className="flex flex-col gap-1 px-3 py-4" aria-label={menuLabel}>

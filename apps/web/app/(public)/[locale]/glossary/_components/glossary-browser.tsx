@@ -108,7 +108,7 @@ export function GlossaryBrowser({
               type="button"
               aria-label={t("clearSearch")}
               onClick={() => setQuery("")}
-              className="absolute inset-inline-end-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground"
+              className="absolute end-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground"
             >
               <X aria-hidden className="size-4" />
             </button>

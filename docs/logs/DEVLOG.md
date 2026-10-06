@@ -28389,3 +28389,64 @@ are above Prisma's defaults, and the client is constructed with them. 2/2.
 
 **Not done.** Redeploy. The prerender itself was not reproduced locally,
 because no local language besides `ar` is live.
+
+## 2026-10-06 — Module 07/12: one clear button on public search fields
+
+**What happened.** The glossary search (reported in Urdu) showed two × buttons.
+
+**Cause.**
+- `SearchInput` renders `type="search"`. Chrome and Safari draw their own
+  clear button on such a field, beside the one the glossary and learn shelves
+  draw themselves.
+- The glossary's clear button used `inset-inline-end-2`. That is not a
+  Tailwind class, so the button was never pinned to the end of the field.
+
+**Fix.**
+- `globals.css` (`@layer base`) hides `::-webkit-search-cancel-button` and
+  `::-webkit-search-decoration` for every search input, in every language and
+  on both surfaces. Escape still clears a field.
+- The glossary button uses `end-2`, as the course and quiz shelves already do.
+
+**Tests.** New `apps/web/app/search-clear-button.test.ts` (2/2) checks that
+the CSS rule is present and that no `inset-inline-*` class is used.
+
+## 2026-10-06 — Module 08/12: the language switcher on phones
+
+**What happened.** The header's language globe could not be seen or tapped on
+a phone.
+
+**Cause.**
+- Below xl the logo is absolutely positioned in the middle of the bar. A
+  positioned box paints over its in-flow siblings, so where the end cluster
+  ran into it, the logo covered the controls.
+- On a 320px phone, or with a signed-in reader's avatar in the row, the end
+  cluster (search, globe with "EN", avatar) reached the logo. The globe was
+  the control that ended up under it.
+
+**Fix.**
+- Below sm `LocaleSwitcher` is the globe alone in a 36px square. The code
+  stays in its accessible name (`max-sm:sr-only`), and from sm up the visible
+  "EN" returns.
+- The header's end cluster is `relative z-10` and its gap is 4px below sm, so
+  the controls always paint above the logo and can be tapped.
+- On a phone the logo is `h-9`, the size the menu sheet already uses. It
+  stays `h-11` from sm.
+
+**Tests.** Playwright measurements at 320, 360, 390, 640, 1024 and 1280px in
+`en`, and at 320px in `ar`: the globe never overlaps the logo, no page
+scrolls sideways, and the menu opens inside the viewport. eslint is clean.
+`public-chrome`, `account-menu`, `public-session` and `radius-scale` pass,
+45/45. The running dev server had not compiled the new `sm:h-11` class (a
+server component's new utility needs a restart), so the desktop logo size
+was not checked there.
+
+**Follow-up, same day: the language switcher in the mobile menu.** The owner
+asked for the globe inside the menu sheet too, at the top right.
+`MobileNav` takes `locales` from the header and renders `LocaleSwitcher` in
+the sheet's top bar, absolutely placed at the inline end. That is the corner
+opposite the close button, and it flips to the left in Arabic, so the logo
+stays centred. It keeps the visible code (`compactBelowSm={false}`), and
+picking a language closes the sheet (`onNavigate`), as every other row in the
+menu does. Measured at 320, 360 (`ar`) and 768px: the globe clears the logo.
+`/glossary` → pick العربية → `/ar/glossary`, `dir=rtl`, sheet closed. No new
+catalog keys: the accessible name reuses `nav.chooseLanguage`.
