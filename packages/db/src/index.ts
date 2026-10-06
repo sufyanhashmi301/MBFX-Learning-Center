@@ -21,11 +21,27 @@ const SCHEMA_SHAPE = JSON.stringify(
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 
+/**
+ * The default limits of every transaction that does not set its own —
+ * including the IMPLICIT one Prisma opens around a read that loads a relation
+ * (`findUnique({ select: { translations: … } })`), which is the case nobody
+ * sees in the source.
+ *
+ * Prisma's defaults are `maxWait` 2 s and `timeout` 5 s, and the timeout
+ * counts from the start, time queued behind other queries included. A
+ * production build prerenders every page of every LIVE language at once (five
+ * workers, each with its own pool), so switching Urdu on was enough to push
+ * one settings read past 5 s, and `next build` failed on `/ur/glossary` with
+ * "A rollback cannot be executed on an expired transaction" (2026-10-06).
+ * These are ceilings, not targets: a fast query is no slower for them.
+ */
+export const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
+
 function createClient() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const adapter = new PrismaMariaDb(url);
-  return new PrismaClient({ adapter });
+  return new PrismaClient({ adapter, transactionOptions: TRANSACTION_OPTIONS });
 }
 
 // Lazy: DATABASE_URL isn't necessarily set yet at *import* time — ESM hoists

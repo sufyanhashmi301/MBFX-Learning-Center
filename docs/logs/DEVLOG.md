@@ -28356,3 +28356,36 @@ one language from every translation tab.
 
 **Not done.** Not clicked through in a browser. Run
 `pnpm db:deploy` on production for the new column. Commit and deploy.
+
+## 2026-10-06 — Module 01/14: production build failed on `/ur/glossary` (transaction limits)
+
+**What happened.** The deploy of `0e1112d` failed in `next build` while
+prerendering `/ur/glossary`: `prisma.setting.findUnique()` (the localized
+settings reader) threw P2028, "A rollback cannot be executed on an expired
+transaction … timeout 5000 ms, 5631 ms passed". The live site was unchanged;
+`deploy-release.sh` stopped before the switch.
+
+**Cause.**
+- A read that loads a relation (`translations`) runs inside an implicit
+  transaction.
+- Prisma's default limits for it are 2 s `maxWait` and 5 s `timeout`, and
+  the timeout includes time spent queued.
+- Urdu had been switched on in production. That adds every `/ur/*` page to
+  the prerender: five build workers each with its own pool, on the same box
+  as the live app.
+- One settings read waited past 5 s.
+
+Nothing in the settings reader or the client had changed. Load alone tipped
+it over.
+
+**Fix.** `@repo/db` builds the client with `transactionOptions`
+`{ maxWait: 10 s, timeout: 30 s }` (`TRANSACTION_OPTIONS`). These are
+ceilings, so a fast query is unaffected. Explicit `$transaction` calls that
+set their own limits keep them.
+
+**Tests.** `packages/db/src/index.test.ts` gets a regression test: the limits
+are above Prisma's defaults, and the client is constructed with them. 2/2.
+`tsc` is clean on `@repo/db`.
+
+**Not done.** Redeploy. The prerender itself was not reproduced locally,
+because no local language besides `ar` is live.
