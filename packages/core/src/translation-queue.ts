@@ -63,6 +63,24 @@ export const TRANSLATION_TABLES = {
 export type TranslatableEntityType = keyof typeof TRANSLATION_TABLES;
 
 /**
+ * A Sync "reset" (ADR-191): forgets which English every MACHINE translation
+ * in one language was made from, so the next backfill re-translates each in
+ * place — every job handler skips a machine row only while its hash matches.
+ * Nothing is deleted, so pages keep their text until the new one lands, and a
+ * person's row (any other status) is not touched. Returns the rows marked.
+ */
+export async function markMachineTranslationsForRedo(locale: string): Promise<number> {
+  let marked = 0;
+  for (const { table } of Object.values(TRANSLATION_TABLES)) {
+    marked += await db.$executeRawUnsafe(
+      `UPDATE ${table} SET sourceHash = NULL WHERE locale = ? AND translationStatus = 'MACHINE_TRANSLATED'`,
+      locale,
+    );
+  }
+  return marked;
+}
+
+/**
  * After a person saved the ENGLISH text of an entity (ADR-161 #3/#4): a
  * person's TRANSLATED sibling whose hash no longer matches — or was never
  * known — becomes OUTDATED; a MACHINE_TRANSLATED one is left for the job,
@@ -76,8 +94,8 @@ export async function afterSourceSave(
   entityId: string,
   currentHash: string | null,
   defaultLocale: string,
-  // False for a type the machine may not translate (a `legal` setting,
-  // ADR-165 #6): the sweep still flags a person's stale row, nothing queues.
+  // False for a source with nothing to translate (an empty setting): the
+  // sweep still flags a person's stale row, nothing queues.
   options: { enqueue?: boolean } = {},
 ): Promise<void> {
   const { table, fk } = TRANSLATION_TABLES[type];

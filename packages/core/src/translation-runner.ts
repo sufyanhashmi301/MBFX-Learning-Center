@@ -15,17 +15,20 @@ import {
   type RunSummary,
 } from "@repo/translate";
 
+import { INTERFACE_TEXT_JOB_TYPE, interfaceTextJobHandler } from "./interface-text.ts";
 import { TRANSLATABLE_TYPES } from "./translatable-types.ts";
-import { translationTargetLocales } from "./translation-queue.ts";
 
 /**
- * Entity type → handler, from the registry. A type with no entry is refused
+ * Entity type → handler, from the registry, plus a language's interface text
+ * (ADR-189 #2), which is queue work but not a translatable TYPE: it has no
+ * table, no backfill walk and no review rows. A type with no entry is refused
  * by the queue as `internal_error`, so enqueueing an entity before its handler
  * exists fails loudly on the dashboard rather than silently.
  */
-export const TRANSLATION_JOB_HANDLERS: JobHandlers = Object.fromEntries(
-  TRANSLATABLE_TYPES.map((type) => [type.entityType, type.handler]),
-);
+export const TRANSLATION_JOB_HANDLERS: JobHandlers = {
+  ...Object.fromEntries(TRANSLATABLE_TYPES.map((type) => [type.entityType, type.handler])),
+  [INTERFACE_TEXT_JOB_TYPE]: interfaceTextJobHandler,
+};
 
 async function defaultLocaleCode(): Promise<string> {
   return (
@@ -42,12 +45,16 @@ function backfillSources(defaultLocale: string): BackfillSource[] {
 }
 
 /**
- * The locales work may be done for, read once per tick. A job for any other
- * locale finishes without calling Google (ADR-163 #4).
+ * The locales work may be done for, read once per tick: every language that
+ * is not the default, live or not (ADR-189 #4). An off language only has
+ * jobs because someone pressed Sync for it, and switching one off deletes its
+ * pending jobs, so this no longer needs to be "is live" to stop spending. A
+ * job for a deleted language (or the default) finishes without translating.
  */
-async function activeLocaleCheck(): Promise<(locale: string) => Promise<boolean>> {
-  const active = new Set(await translationTargetLocales());
-  return async (locale) => active.has(locale);
+async function workableLocaleCheck(): Promise<(locale: string) => Promise<boolean>> {
+  const rows = await db.locale.findMany({ where: { isDefault: false }, select: { code: true } });
+  const workable = new Set(rows.map((row) => row.code));
+  return async (locale) => workable.has(locale);
 }
 
 export async function runTranslationWork(
@@ -55,7 +62,7 @@ export async function runTranslationWork(
 ): Promise<RunSummary | null> {
   try {
     const [isLocaleActive, defaultLocale] = await Promise.all([
-      activeLocaleCheck(),
+      workableLocaleCheck(),
       options.backfill ? defaultLocaleCode() : Promise.resolve(null),
     ]);
     return await runTranslationQueue({

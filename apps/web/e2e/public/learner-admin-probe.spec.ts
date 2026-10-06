@@ -134,6 +134,8 @@ const ADMIN_HANDLERS: {
 }[] = [
   { path: "/keystone/api/media?include=facets,recent", method: "GET" },
   { path: "/keystone/api/newsletter/export", method: "GET" },
+  // ADR-189: the translation progress readout, `translations.view`.
+  { path: "/keystone/api/translate/progress", method: "GET" },
   // ADR-128: the idle watcher's two reads. STAFF-only, no permission key —
   // a learner's session must not learn its own expiry through the admin.
   { path: "/keystone/api/session", method: "GET" },

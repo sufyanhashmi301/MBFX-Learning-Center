@@ -37,7 +37,6 @@ export default async function TranslationLanguagesPage() {
           : t("languages.catalogMissing", { count: row.catalogGaps }),
     catalogComplete: row.catalogGaps === 0,
     catalogGaps: row.catalogGaps,
-    siteTextGaps: row.siteTextGaps,
     refusal: row.refusal ? t(`languages.refusals.${row.refusal}`) : null,
     estimate:
       row.estimate.characters === 0
@@ -94,7 +93,6 @@ export default async function TranslationLanguagesPage() {
       isDefault: t("languages.refusals.isDefault"),
       unroutable: t("languages.refusals.unroutable"),
       catalogIncomplete: t("languages.refusals.catalogIncomplete"),
-      siteTextIncomplete: t("languages.refusals.siteTextIncomplete"),
     },
     emptyTitle: t("overview.noLocalesTitle"),
     emptyBody: t("overview.noLocalesBody"),
@@ -113,10 +111,10 @@ export default async function TranslationLanguagesPage() {
         available={view.available}
         all={view.all}
         defaultCode={view.defaultLocale}
-        // The checklist links only to screens this person can open; each
-        // re-checks its own keys (the Interface text and Site text gates).
+        // The checklist links only to a screen this person can open, which
+        // re-checks its own key.
         canEditInterfaceText={can(subject, "translations.update")}
-        canEditSiteText={can(subject, "translations.update") && can(subject, "settings.update")}
+        canSync={can(subject, "translations.approve")}
       />
     </>
   );

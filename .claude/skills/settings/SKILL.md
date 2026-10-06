@@ -146,10 +146,11 @@ text fields of `header.announcementBar` / `header.topBar` / `header.cta`.
   malformed ⇒ the English. `apps/web/app/translatable-settings.test.ts` fails
   on a public `getSetting("<registry key>")`, and on a registry key nothing
   renders through the localized reader (code-style.md #28).
-- **The `legal` group is human-only** (`machine: false`): no job, no backfill,
-  never sent to Google. A language cannot be switched on while either legal
-  key has no translation (`siteTextIncomplete`). Written at Settings →
-  Translation → Site text, behind `settings.update` AND `translations.update`.
+- **Every key is machine-translated, `legal` included (ADR-190, superseding
+  ADR-165 #6/#9).** There is no `machine` flag and no go-live gate on site
+  text. A person corrects any of them at Settings → Translation → Site text,
+  behind `settings.update` AND `translations.update`, and the machine never
+  overwrites a person's row.
 - **Excluded on purpose**: `site.name` (brand), `site.tagline` (read by
   nothing — delete it or wire it before translating it), `seo.titleTemplate`,
   the two legal identity lines (ADR-110), the `email` group.

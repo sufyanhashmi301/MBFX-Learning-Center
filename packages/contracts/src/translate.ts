@@ -179,13 +179,31 @@ export type InterfaceTextFillInput = z.infer<typeof interfaceTextFillSchema>;
 
 /**
  * Sync and Retry failed (ADR-163 #5): one locale, or — with no locale — every
- * active one.
+ * language that is not the default (ADR-189 #1). Also the progress read's
+ * query (ADR-189 #6).
  */
 export const translationScopeSchema = z.object({
   locale: localeCodeSchema.optional(),
 });
 
 export type TranslationScopeInput = z.infer<typeof translationScopeSchema>;
+
+/**
+ * How a Sync treats what is already translated (ADR-191): `missing` writes
+ * only what has no translation (and machine text whose English changed);
+ * `reset` also re-translates every machine translation in place. A person's
+ * translation is kept in both.
+ */
+export const TRANSLATION_SYNC_MODES = ["missing", "reset"] as const;
+
+export type TranslationSyncMode = (typeof TRANSLATION_SYNC_MODES)[number];
+
+/** Sync: a scope plus a mode. Retry and the progress read keep the bare scope. */
+export const translationSyncSchema = translationScopeSchema.extend({
+  mode: z.enum(TRANSLATION_SYNC_MODES).default("missing"),
+});
+
+export type TranslationSyncInput = z.infer<typeof translationSyncSchema>;
 
 /** Editor prefill: at most this many characters of source per request. */
 export const TRANSLATE_PREFILL_MAX_CHARS = 100_000;

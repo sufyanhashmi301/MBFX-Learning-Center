@@ -8,9 +8,8 @@
 // engine derives them from an English row IN the translation table and a
 // setting has none.
 //
-// Only a registry key the machine may translate is walked or translated. A
-// `legal` key (ADR-165 #6) is counted — the dashboard should say a language
-// is missing its disclaimer — but never sent to Google.
+// Every registry key with words is walked and translated, the `legal` group
+// included since ADR-190 ended ADR-165 #6's human-only rule.
 import { TranslationStatus, db } from "@repo/db";
 import {
   TRANSLATABLE_SETTINGS,
@@ -50,9 +49,9 @@ function settingSegments(source: SettingSource): Segment[] {
   }));
 }
 
-/** A source the machine may work on: a machine key with some words in it. */
+/** A source the machine may work on: one with some words in it. */
 function machineSource(source: SettingSource | null): SettingSource | null {
-  return source && source.machine && hasSettingText(source) ? source : null;
+  return source && hasSettingText(source) ? source : null;
 }
 
 const settingEntity: TranslatableEntity<SettingSource> = {
@@ -61,7 +60,7 @@ const settingEntity: TranslatableEntity<SettingSource> = {
   parentTable: "settings",
   titleColumn: "label",
   updatedAtColumn: "updatedAt",
-  // A job for a human-only key, or for an empty one, finishes untranslated.
+  // A job for an empty key finishes untranslated.
   loadSource: async (client, settingId) =>
     machineSource(await loadSettingSource(client, settingId)),
   hash: hashSettingSource,
@@ -102,8 +101,7 @@ export const settingTranslatable: TranslatableType = {
     return sources.slice(0, take);
   },
 
-  // Every translatable key with words counts, human-only ones included: a
-  // language without its disclaimer is not fully translated.
+  // Every translatable key with words counts.
   async coverage(locale) {
     const sources = (await loadSettingSources(db)).filter(hasSettingText);
     const groups = await db.settingTranslation.groupBy({

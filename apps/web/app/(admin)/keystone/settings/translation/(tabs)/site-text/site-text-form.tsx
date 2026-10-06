@@ -8,7 +8,7 @@
 // inline before anything is sent. The target field carries the language's
 // `lang` and `dir`, so Arabic is typed right to left.
 import * as React from "react";
-import { Globe, Scale } from "lucide-react";
+import { Globe } from "lucide-react";
 import { settingTranslationSchema, type TranslatableSettingKey } from "@repo/contracts";
 import type { SiteTextEntry } from "@repo/core";
 import { Badge } from "@repo/ui/components/badge";
@@ -30,8 +30,6 @@ export interface SiteTextLabels {
   cleared: string;
   blankHint: string;
   emptyEnglish: string;
-  humanOnly: string;
-  humanOnlyHint: string;
   machineHint: string;
   statuses: {
     missing: string;
@@ -110,15 +108,9 @@ function SiteTextCard({
   return (
     <EditorSection
       title={entry.label}
-      description={entry.machine ? labels.machineHint : labels.humanOnlyHint}
-      icon={entry.machine ? Globe : Scale}
-      accent={entry.machine ? undefined : "warning"}
-      actions={
-        <div className="flex items-center gap-2">
-          {!entry.machine && <Badge variant="outline">{labels.humanOnly}</Badge>}
-          <Badge variant={status.tone}>{labels.statuses[status.label]}</Badge>
-        </div>
-      }
+      description={labels.machineHint}
+      icon={Globe}
+      actions={<Badge variant={status.tone}>{labels.statuses[status.label]}</Badge>}
       footer={
         hasEnglish ? (
           <div className="flex items-center justify-end">

@@ -9,8 +9,11 @@ import { db } from "@repo/db";
 import { invalidateActiveLocales, publicCatalogGaps } from "@repo/i18n";
 import { isOfferedLocale, SUPPORTED_LOCALES } from "@repo/i18n/routing";
 import {
+  cancelPendingLocaleJobs,
   countJobs,
   enqueueLocaleBackfill,
+  isAutoTranslateAvailable,
+  loadPausedLocales,
   listFailedJobs,
   loadBackfillStates,
   loadTranslateSettings,
@@ -19,14 +22,22 @@ import {
   type JobStatusName,
   type PeriodUsage,
 } from "@repo/translate";
-import type { LocaleActivationInput, TranslationScopeInput } from "@repo/contracts";
+import type {
+  LocaleActivationInput,
+  TranslationScopeInput,
+  TranslationSyncInput,
+} from "@repo/contracts";
 
 import { recordAudit } from "./index.ts";
+import {
+  countInterfaceText,
+  enqueueInterfaceTextFill,
+  markInterfaceTextForRedo,
+} from "./interface-text.ts";
 import { countContentByLocale } from "./languages.ts";
-import { siteTextGaps } from "./site-text.ts";
 import { TRANSLATABLE_TYPES, type ReviewRow } from "./translatable-types.ts";
 import { addCoverage, emptyCoverage, type CoverageCounts } from "./translation-coverage.ts";
-import { translationTargetLocales } from "./translation-queue.ts";
+import { markMachineTranslationsForRedo } from "./translation-queue.ts";
 
 async function defaultLocaleCode(): Promise<string> {
   return (
@@ -186,14 +197,7 @@ export async function loadTranslationReviewQueue(
 // ─── Languages ────────────────────────────────────────────────────────────
 
 /** Why a locale cannot be switched on (ADR-163 #2). */
-export type LocaleActivationRefusal =
-  | "notFound"
-  | "isDefault"
-  | "unroutable"
-  | "catalogIncomplete"
-  // A human-only setting (the risk disclaimer, the copyright line) has no
-  // translation yet, and the machine will never write one (ADR-165 #9).
-  | "siteTextIncomplete";
+export type LocaleActivationRefusal = "notFound" | "isDefault" | "unroutable" | "catalogIncomplete";
 
 export interface LanguageRow {
   code: string;
@@ -208,8 +212,6 @@ export interface LanguageRow {
   contentRows: number;
   /** Public catalog keys missing, or null when next-intl cannot route the code. */
   catalogGaps: number | null;
-  /** Human-only settings with no translation in this language (ADR-165 #9). */
-  siteTextGaps: number;
   /** Why activation would be refused, or null when it may go ahead. */
   refusal: LocaleActivationRefusal | null;
   /** What a backfill would send now (ADR-163 #3). Estimated. */
@@ -236,10 +238,9 @@ export function estimateCostUsd(characters: number, pricePerMillionChars: number
   return ((characters * pricePerMillionChars) / 1_000_000).toFixed(6);
 }
 
-function refusalFor(gaps: number | null, siteTextMissing = 0): LocaleActivationRefusal | null {
+function refusalFor(gaps: number | null): LocaleActivationRefusal | null {
   if (gaps === null) return "unroutable";
   if (gaps > 0) return "catalogIncomplete";
-  if (siteTextMissing > 0) return "siteTextIncomplete";
   return null;
 }
 
@@ -261,9 +262,8 @@ async function estimateBackfill(
 export async function loadLanguagesView(): Promise<LanguagesView> {
   const defaultLocale = await defaultLocaleCode();
   const [locales, settings] = await Promise.all([targetLocaleRows(), loadTranslateSettings()]);
-  const [gaps, siteText, estimates, contentRows, all] = await Promise.all([
+  const [gaps, estimates, contentRows, all] = await Promise.all([
     Promise.all(locales.map((locale) => publicCatalogGaps(locale.code))),
-    Promise.all(locales.map((locale) => siteTextGaps(locale.code))),
     estimateBackfill(
       locales.map((l) => l.code),
       defaultLocale,
@@ -285,7 +285,6 @@ export async function loadLanguagesView(): Promise<LanguagesView> {
         : Math.max(0, settings.monthlyCharBudget - settings.usage.characters),
     rows: locales.map((locale, index) => {
       const missing = gaps[index] ?? null;
-      const missingSiteText = siteText[index] ?? [];
       const characters = estimates.get(locale.code) ?? 0;
       return {
         code: locale.code,
@@ -298,8 +297,7 @@ export async function loadLanguagesView(): Promise<LanguagesView> {
         sortOrder: locale.sortOrder,
         contentRows: contentRows.get(locale.code) ?? 0,
         catalogGaps: missing === null ? null : missing.length,
-        siteTextGaps: missingSiteText.length,
-        refusal: refusalFor(missing === null ? null : missing.length, missingSiteText.length),
+        refusal: refusalFor(missing === null ? null : missing.length),
         estimate: {
           characters,
           costUsd: estimateCostUsd(characters, settings.pricePerMillionChars),
@@ -346,10 +344,7 @@ export async function setLocaleActive(
 
   if (input.active) {
     const gaps = await catalogGaps(row.code);
-    const refusal = refusalFor(
-      gaps === null ? null : gaps.length,
-      (await siteTextGaps(row.code)).length,
-    );
+    const refusal = refusalFor(gaps === null ? null : gaps.length);
     if (refusal) {
       return {
         ok: false,
@@ -372,39 +367,63 @@ export async function setLocaleActive(
   }
 
   // Also on a repeat "on": the backfill is idempotent, and a locale switched
-  // on by the seed or by hand has never had one.
+  // on by the seed or by hand has never had one. Off stops spending: the
+  // runner works for any non-default language now (ADR-189 #4), so the
+  // language's queued work is deleted rather than left to be skipped.
   if (input.active) await enqueueLocaleBackfill(row.code);
+  else await cancelPendingLocaleJobs(row.code);
   return { ok: true, backfillQueued: input.active };
 }
 
-// ─── Sync and retry (ADR-163 #5) ──────────────────────────────────────────
+// ─── Sync and retry (ADR-163 #5, ADR-189) ─────────────────────────────────
 
 export type TranslationScopeResult =
   | { ok: true; locales: string[]; count: number }
-  | { ok: false; reason: "inactiveLocale" | "noActiveLocale" };
+  | { ok: false; reason: "unknownLocale" | "noLocale" | "providerUnavailable" };
 
-/** The active non-default locales a scoped action applies to. */
+/**
+ * The languages a scoped action applies to: one named language, or every one
+ * that is not the default — live or not (ADR-189 #1). Null for a code that is
+ * not a non-default language row.
+ */
 async function scopeLocales(input: TranslationScopeInput): Promise<string[] | null> {
-  const active = await translationTargetLocales();
-  if (!input.locale) return active;
-  return active.includes(input.locale) ? [input.locale] : null;
+  const targets = (await targetLocaleRows()).map((row) => row.code);
+  if (!input.locale) return targets;
+  return targets.includes(input.locale) ? [input.locale] : null;
 }
 
-/** Sync: re-walk every item of the scope's locales. Nothing is translated here. */
+/**
+ * Sync (ADR-189 #1/#2): for each language in scope, re-walk every content
+ * item AND queue the interface-text fill. Nothing is translated here; the
+ * caller starts the queue in `after()` and the cron continues it.
+ *
+ * `reset` (ADR-191) first marks every machine translation and machine
+ * interface string in scope for re-translation in place. A person's
+ * translations are kept in both modes.
+ */
 export async function syncTranslations(
   userId: string,
-  input: TranslationScopeInput,
+  input: TranslationSyncInput,
 ): Promise<TranslationScopeResult> {
   const locales = await scopeLocales(input);
-  if (!locales) return { ok: false, reason: "inactiveLocale" };
-  if (locales.length === 0) return { ok: false, reason: "noActiveLocale" };
-  for (const locale of locales) await enqueueLocaleBackfill(locale);
+  if (!locales) return { ok: false, reason: "unknownLocale" };
+  if (locales.length === 0) return { ok: false, reason: "noLocale" };
+  if (!(await isAutoTranslateAvailable())) return { ok: false, reason: "providerUnavailable" };
+  let redo = 0;
+  for (const locale of locales) {
+    if (input.mode === "reset") {
+      redo += await markMachineTranslationsForRedo(locale);
+      redo += await markInterfaceTextForRedo(locale);
+    }
+    await enqueueLocaleBackfill(locale);
+    await enqueueInterfaceTextFill(locale);
+  }
   await recordAudit({
     userId,
     action: "translations.sync",
     entityType: "TranslationJob",
     entityId: input.locale ?? "*",
-    changes: { after: { locales } },
+    changes: { after: { locales, mode: input.mode, ...(input.mode === "reset" ? { redo } : {}) } },
   });
   return { ok: true, locales, count: locales.length };
 }
@@ -423,6 +442,71 @@ export async function retryFailedTranslations(
     changes: { after: { count } },
   });
   return { ok: true, locales: input.locale ? [input.locale] : [], count };
+}
+
+// ─── Progress (ADR-189 #6) ────────────────────────────────────────────────
+
+export interface TranslationProgress {
+  code: string;
+  name: string;
+  isActive: boolean;
+  /** Public interface strings: written in this language, of all of them. */
+  interfaceText: { done: number; total: number; manual: number };
+  /** Translatable content items with a translation, of all of them. */
+  content: { done: number; total: number };
+  /** Jobs waiting or running, interface text and backfill walk included. */
+  queued: number;
+  failed: number;
+  /** A pausing reason (budget, quota) holding the queued work back, or null. */
+  pausedBy: string | null;
+}
+
+/**
+ * The progress readout for every non-default language, or one. Uncached and
+ * cheap enough to poll every few seconds while work is queued: a count query
+ * per translatable type, one catalog merge, one grouped job count.
+ */
+export async function loadTranslationProgress(
+  options: { locale?: string } = {},
+): Promise<TranslationProgress[]> {
+  const defaultLocale = await defaultLocaleCode();
+  const rows = (await targetLocaleRows()).filter(
+    (row) => !options.locale || row.code === options.locale,
+  );
+  const [jobCounts, paused] = await Promise.all([countJobs(), loadPausedLocales()]);
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const [text, coverages] = await Promise.all([
+        countInterfaceText(row.code),
+        Promise.all(TRANSLATABLE_TYPES.map((type) => type.coverage(row.code, defaultLocale))),
+      ]);
+      const coverage = emptyCoverage();
+      for (const entry of coverages) addCoverage(coverage, entry);
+
+      let queued = 0;
+      let failed = 0;
+      for (const count of jobCounts) {
+        if (count.locale !== row.code) continue;
+        if (count.status === "PENDING" || count.status === "RUNNING") queued += count.count;
+        if (count.status === "FAILED") failed += count.count;
+      }
+      return {
+        code: row.code,
+        name: row.name,
+        isActive: row.isActive,
+        interfaceText: {
+          done: text.total - text.missing,
+          total: text.total,
+          manual: text.manual,
+        },
+        content: { done: coverage.total - coverage.missing, total: coverage.total },
+        queued,
+        failed,
+        pausedBy: queued > 0 ? (paused.get(row.code) ?? null) : null,
+      };
+    }),
+  );
 }
 
 /** The housekeeping sweep's translation half (ADR-162 #10). */

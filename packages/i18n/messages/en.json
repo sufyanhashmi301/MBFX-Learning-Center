@@ -924,7 +924,8 @@
         "quiz": "Quiz",
         "quiz_question": "Quiz question",
         "setting": "Site text",
-        "promotion": "Promotion"
+        "promotion": "Promotion",
+        "catalog": "Interface text"
       },
       "overview": {
         "offTitle": "Automatic translation is off",
@@ -952,20 +953,16 @@
         "failedCount": "{count} failed",
         "backfilling": "Backfilling",
         "sync": "Sync",
-        "syncAll": "Sync all languages",
         "retryFailed": "Retry failed",
         "retryAll": "Retry all failed",
         "openActions": "Actions for {language}",
-        "syncTitle": "Sync {language}?",
-        "syncAllTitle": "Sync every live language?",
-        "syncBody": "Every item is checked against its English source. Machine translations that are out of date are translated again, which uses characters from the budget. A translation a person saved is never overwritten; if its English changed, it is listed under Review.",
         "retryTitle": "Retry failed translations?",
         "retryBody": "The failed jobs are queued again and tried up to three more times. If the reason was the key or the budget, fix that first under Provider.",
-        "syncDone": "Sync started. Work continues in the background every 5 minutes.",
         "retryDone": "Queued again: {count}.",
         "refusals": {
-          "inactiveLocale": "That language is not live, so there is nothing to sync.",
-          "noActiveLocale": "No language other than English is live yet. Switch one on under Languages."
+          "unknownLocale": "That language no longer exists.",
+          "noLocale": "There is no language to translate into yet. Add one under Languages.",
+          "providerUnavailable": "Automatic translation is off, or no key is saved. Set it up under Provider."
         },
         "noLocalesTitle": "Only English is set up",
         "noLocalesBody": "Other languages appear here once they exist in the database.",
@@ -983,6 +980,30 @@
         "typesDescription": "The same counts for each kind of content, so a gap in one module is visible rather than averaged away.",
         "colType": "Content",
         "searchTypes": "Search content types"
+      },
+      "sync": {
+        "button": "Sync",
+        "allButton": "Sync all languages",
+        "title": "Sync {language}",
+        "allTitle": "Sync every language",
+        "description": "Translates this in the background, including a language that is not live yet. It uses characters from the translation budget, and a translation a person saved is never overwritten.",
+        "modeLegend": "What to translate",
+        "modes": {
+          "missing": "Only what is missing",
+          "missingHint": "Translates interface text and content that has no translation yet, and machine translations whose English has changed.",
+          "reset": "Reset machine translations",
+          "resetHint": "Also translates every machine translation again from the current English. Each keeps its current text until the new one lands. Uses more of the budget."
+        },
+        "confirmMissing": "Translate missing",
+        "confirmReset": "Reset and translate",
+        "cancel": "Cancel",
+        "missingDone": "Translation started. Progress shows on the language's card.",
+        "resetDone": "Machine translations are being redone. Progress shows on the language's card.",
+        "refusals": {
+          "unknownLocale": "That language does not exist, or it is the default.",
+          "noLocale": "There is no language besides the default to translate into.",
+          "providerUnavailable": "Automatic translation is switched off or has no key. Set it up under Provider first."
+        }
       },
       "languages": {
         "howTitle": "Adding a language",
@@ -1012,8 +1033,7 @@
           "notFound": "That language does not exist.",
           "isDefault": "The default language is always live.",
           "unroutable": "The site's routing does not know this language, so its pages cannot be served.",
-          "catalogIncomplete": "Its interface text is incomplete. Fill the missing strings under Interface text first.",
-          "siteTextIncomplete": "Its site text is incomplete. Translate the risk disclaimer and the copyright line under Site text first — a legal statement is never machine-translated."
+          "catalogIncomplete": "Its interface text is incomplete. Fill the missing strings under Interface text first."
         },
         "add": "Add language",
         "addTitle": "Add a language",
@@ -1064,14 +1084,11 @@
           "interfaceTextDone": "Every menu, button and heading is translated.",
           "interfaceTextMissing": "{count, plural, one {# string is not translated yet.} other {# strings are not translated yet.}}",
           "interfaceTextAction": "Fill interface text",
-          "siteTextTitle": "Legal site text",
-          "siteTextDone": "The risk disclaimer and copyright line are translated.",
-          "siteTextMissing": "{count, plural, one {# legal line needs a person's translation.} other {# legal lines need a person's translation.}}",
-          "siteTextAction": "Write site text",
-          "googleHint": "On the Interface text screen, “Translate missing automatically” fills up to 200 strings each time you press it. Legal text is never machine-translated.",
+          "googleHint": "On the Interface text screen, “Translate missing automatically” translates every missing string in the background.",
           "close": "Close"
         },
-        "hidden": "Hidden"
+        "hidden": "Hidden",
+        "syncLanguage": "Sync {language}"
       },
       "review": {
         "intro": "Translations no person has read yet: machine translations, a person's translations whose English has changed since, and translations where a figure changed. All of them are live. Saving one in its editor takes it off this list, and a machine translation becomes visible to search engines only then.",
@@ -1104,9 +1121,7 @@
         "cleared": "Translation removed. The English shows in its place.",
         "blankHint": "Leave blank to show the English.",
         "emptyEnglish": "The English is empty, so there is nothing to translate.",
-        "humanOnly": "Written by a person",
-        "humanOnlyHint": "A legal statement is never machine-translated. Until it is translated here, this language shows the English and cannot be switched on.",
-        "machineHint": "Translated automatically while this language is live. Saving here replaces the machine's words with yours.",
+        "machineHint": "Translated automatically when automatic translation is on. Saving here replaces the machine's words with yours.",
         "statusMissing": "Not translated",
         "statusMachine": "Machine",
         "statusTranslated": "Translated",
@@ -1166,11 +1181,26 @@
         },
         "fill": "Translate missing automatically",
         "fillTitle": "Translate missing text automatically?",
-        "fillBody": "Up to {limit} missing strings are sent to the translation provider and saved as machine translations, which you can then review and edit. Strings someone has written are never replaced. This uses the translation budget.",
-        "filled": "{translated, plural, one {# string translated.} other {# strings translated.}} {remaining, plural, =0 {Nothing left to translate.} other {# still missing; run it again to continue.}}",
-        "fillFailed": "{failed, plural, one {# string could not be translated and is still missing.} other {# strings could not be translated and are still missing.}}",
+        "fillBody": "Every missing string is sent to the translation provider in the background, 200 at a time, and saved as a machine translation you can review and edit. Strings someone has written are never replaced. This uses the translation budget.",
         "fillManual": "{manual, plural, one {# string must be written by hand.} other {# strings must be written by hand.}}",
-        "noLanguages": "No language has been added yet."
+        "noLanguages": "No language has been added yet.",
+        "fillQueued": "{remaining, plural, =0 {Nothing left to translate.} one {Translating # string in the background.} other {Translating # strings in the background.}}"
+      },
+      "progress": {
+        "title": "Progress",
+        "description": "What is translated in each language, live while Sync or a fill is running. Content includes menus and site text; the legal site text is always written by a person.",
+        "cardLabel": "{language} translation progress",
+        "live": "Live",
+        "notLive": "Not live",
+        "interfaceText": "Interface text",
+        "content": "Content",
+        "barLabel": "{language}: {part}",
+        "count": "{part}: {done} of {total}",
+        "working": "{count, plural, one {Translating · # job queued} other {Translating · # jobs queued}}",
+        "paused": "Paused: {reason}",
+        "idle": "Nothing queued",
+        "failed": "{count, plural, one {# job failed. Use Retry failed.} other {# jobs failed. Use Retry failed.}}",
+        "manual": "{count, plural, one {# string must be written by a person.} other {# strings must be written by a person.}}"
       }
     },
     "settingsGroupDesc": {

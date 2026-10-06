@@ -1,6 +1,7 @@
 // Translatable settings (ADR-165). The registry of which settings carry words a
-// reader sees, which of their fields those words are in, and whether the
-// machine may translate them. Everything else about a setting — a switch, a
+// reader sees, and which of their fields those words are in. Every one of them
+// is machine-translated when automatic translation is on (ADR-190, which ended
+// ADR-165 #6's human-only `legal` group). Everything else about a setting — a switch, a
 // URL, a phone number — is never translated and always comes from English.
 //
 // A stored translation is ALWAYS an object of fields (ADR-165 #3): the named
@@ -24,11 +25,6 @@ export interface TranslatableSetting {
   /** True when the setting's whole value is the text; false for JSON fields. */
   whole: boolean;
   fields: Readonly<Record<string, TranslatableSettingField>>;
-  /**
-   * Whether Google may translate it (ADR-165 #6). The `legal` group is
-   * human-only: a legal statement in a machine's words is still served.
-   */
-  machine: boolean;
 }
 
 /**
@@ -39,32 +35,26 @@ export const TRANSLATABLE_SETTINGS = {
   "site.description": {
     whole: true,
     fields: { [WHOLE_VALUE_FIELD]: { max: 2000, multiline: true } },
-    machine: true,
   },
   "legal.riskDisclaimer": {
     whole: true,
     fields: { [WHOLE_VALUE_FIELD]: { max: 5000, multiline: true } },
-    machine: false,
   },
   "legal.copyrightNotice": {
     whole: true,
     fields: { [WHOLE_VALUE_FIELD]: { max: 500, multiline: false } },
-    machine: false,
   },
   "header.announcementBar": {
     whole: false,
     fields: { text: { max: 300, multiline: false } },
-    machine: true,
   },
   "header.topBar": {
     whole: false,
     fields: { promoText: { max: 200, multiline: false } },
-    machine: true,
   },
   "header.cta": {
     whole: false,
     fields: { label: { max: 100, multiline: false } },
-    machine: true,
   },
 } as const satisfies Partial<Record<SettingKey, TranslatableSetting>>;
 

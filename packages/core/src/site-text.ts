@@ -1,6 +1,5 @@
 // Settings → Translation → Site text (ADR-165 #8), and what an English save of
-// a translatable setting does to its translations (#7) and to switching a
-// language on (#9).
+// a translatable setting does to its translations (#7).
 //
 // The callers have run `requirePermission()` and parsed input with the
 // `@repo/contracts` schema. Every save here writes one audit row.
@@ -60,7 +59,6 @@ export interface SiteTextEntry {
   key: TranslatableSettingKey;
   /** The setting's own admin label (English-only, ADR-043 #2). */
   label: string;
-  machine: boolean;
   fields: SiteTextField[];
   /** Null when this language has no row. */
   status: TranslationStatus | null;
@@ -84,7 +82,6 @@ export async function loadSiteText(locale: string): Promise<SiteTextEntry[]> {
     return {
       key: source.key,
       label: source.label,
-      machine: source.machine,
       fields: Object.entries(entry.fields).map(([name, spec]) => ({
         name,
         max: spec.max,
@@ -105,8 +102,8 @@ export type SaveSettingTranslationResult =
 /**
  * A person's translation of one setting (ADR-165 #8): TRANSLATED, with the
  * hash of the English it was made from. Every field blank means "no
- * translation" and deletes the row, so the English shows and a `legal` key
- * counts as missing again. Refuses a translation that lost a `{token}`, by
+ * translation" and deletes the row, so the English shows until the machine
+ * writes one. Refuses a translation that lost a `{token}`, by
  * the schema the form runs.
  */
 export async function saveSettingTranslation(
@@ -167,8 +164,8 @@ export async function saveSettingTranslation(
 
 /**
  * After Settings saved these keys in English (ADR-165 #7): a person's
- * TRANSLATED row whose words have moved on becomes OUTDATED, and a machine
- * key is queued. Returns the setting ids the caller should drain in
+ * TRANSLATED row whose words have moved on becomes OUTDATED, and every key
+ * with words is queued (ADR-190: the `legal` group too). Returns the setting ids the caller should drain in
  * `after()`. A key that is not translatable is ignored.
  */
 export async function afterSettingsSaved(keys: readonly string[]): Promise<string[]> {
@@ -179,40 +176,11 @@ export async function afterSettingsSaved(keys: readonly string[]): Promise<strin
   for (const key of translatable) {
     const source = await loadSettingSourceByKey(db, key);
     if (!source) continue;
-    const enqueue = source.machine && hasSettingText(source);
+    const enqueue = hasSettingText(source);
     await afterSourceSave("setting", source.id, hashSettingSource(source), defaultLocale, {
       enqueue,
     });
     if (enqueue) queued.push(source.id);
   }
   return queued;
-}
-
-// ─── Switching a language on ──────────────────────────────────────────────
-
-/**
- * The human-only keys (ADR-165 #6) with English words and no translation in
- * `locale`. Switching the language on is refused while any remain (#9): the
- * machine will never fill them. An OUTDATED row counts as present — it is a
- * person's, and it is served.
- */
-export async function siteTextGaps(locale: string): Promise<TranslatableSettingKey[]> {
-  const sources = (await loadSettingSources(db)).filter((s) => !s.machine && hasSettingText(s));
-  if (sources.length === 0) return [];
-  const rows = await db.settingTranslation.findMany({
-    where: { locale, settingId: { in: sources.map((s) => s.id) } },
-    select: { settingId: true, value: true },
-  });
-  const present = new Set(
-    rows
-      .filter((row) => {
-        const source = sources.find((s) => s.id === row.settingId);
-        return (
-          source !== undefined &&
-          Object.values(storedFields(source.key, row.value)).some((text) => text.trim() !== "")
-        );
-      })
-      .map((row) => row.settingId),
-  );
-  return sources.filter((s) => !present.has(s.id)).map((s) => s.key);
 }

@@ -14,7 +14,7 @@
 // language" sits on the title row (ADR-140 §3), Edit on every row, and
 // Delete only on a row that is switched off and has nothing written in it.
 import { useMemo, useState } from "react";
-import { Languages, Pencil, Plus, Trash2 } from "lucide-react";
+import { Languages, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -32,6 +32,7 @@ import { useClientTable } from "../../../../_hooks/use-client-table.ts";
 import { HeaderActions } from "../../../../_components/header-actions.tsx";
 import { useServerAction } from "../../../../_hooks/use-server-action.ts";
 import { StatusBadge } from "../../../../_components/status-badge.tsx";
+import { SyncDialog, type SyncTarget } from "../sync-dialog.tsx";
 import { GoLiveChecklist } from "./go-live-checklist.tsx";
 import { LanguageDialog, type AvailableLanguage, type LanguageDraft } from "./language-dialog.tsx";
 
@@ -46,8 +47,6 @@ export interface LanguageRowView {
   catalogComplete: boolean;
   /** Public interface strings missing; null when the site cannot route it. */
   catalogGaps: number | null;
-  /** Legal site text a person has not translated yet. */
-  siteTextGaps: number;
   /** Why it cannot be switched on, as a sentence; null when it can. */
   refusal: string | null;
   estimate: string;
@@ -102,7 +101,7 @@ export function LanguagesTable({
   all,
   defaultCode,
   canEditInterfaceText,
-  canEditSiteText,
+  canSync,
 }: {
   rows: LanguageRowView[];
   labels: LanguagesLabels;
@@ -110,7 +109,8 @@ export function LanguagesTable({
   all: Array<{ code: string; name: string }>;
   defaultCode: string;
   canEditInterfaceText: boolean;
-  canEditSiteText: boolean;
+  /** Sync a language from its row (ADR-191): `translations.approve`. */
+  canSync: boolean;
 }) {
   const t = useTranslations("admin.translate.languages");
   const { run, pending: busy } = useServerAction();
@@ -118,6 +118,7 @@ export function LanguagesTable({
   const [draft, setDraft] = useState<LanguageDraft | null>(null);
   const [deleting, setDeleting] = useState<LanguageRowView | null>(null);
   const [checklist, setChecklist] = useState<LanguageRowView | null>(null);
+  const [syncTarget, setSyncTarget] = useState<SyncTarget | null>(null);
 
   /** The Live switch: off asks first; on asks first, or explains what is missing. */
   const toggle = (row: LanguageRowView, live: boolean) => {
@@ -231,6 +232,17 @@ export function LanguagesTable({
           const language = row.original;
           return (
             <div className="flex items-center justify-end gap-1">
+              {canSync && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("syncLanguage", { language: language.name })}
+                  disabled={busy}
+                  onClick={() => setSyncTarget({ locale: language.code, language: language.name })}
+                >
+                  <RefreshCw aria-hidden />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -266,7 +278,7 @@ export function LanguagesTable({
         },
       },
     ],
-    [labels, busy, t],
+    [labels, busy, t, canSync],
   );
 
   const dialogs = (
@@ -281,8 +293,8 @@ export function LanguagesTable({
         language={checklist}
         onClose={() => setChecklist(null)}
         canEditInterfaceText={canEditInterfaceText}
-        canEditSiteText={canEditSiteText}
       />
+      <SyncDialog target={syncTarget} onClose={() => setSyncTarget(null)} />
       <LanguageDialog
         draft={draft}
         onClose={() => setDraft(null)}

@@ -8,7 +8,8 @@
 //
 // Callers have run `requirePermission()` (`translations.update` to edit,
 // `translations.approve` to machine-fill, which spends) and parsed the input
-// with `@repo/contracts`.
+// with `@repo/contracts`. The machine fill runs on the translation queue
+// (ADR-189), with `interfaceTextJobHandler` as its handler.
 import { db } from "@repo/db";
 import {
   ADMIN_MESSAGE_NAMESPACES,
@@ -23,21 +24,24 @@ import {
   type MessageShapeProblem,
 } from "@repo/i18n";
 import {
+  enqueueTranslationJobs,
+  isAutoTranslateAvailable,
   planMessage,
-  reasonOf,
   translateCatalogMessages,
   translateSegments,
+  TranslateError,
+  type ClaimedJob,
+  type JobOutcome,
 } from "@repo/translate";
 import type {
   InterfaceTextFillInput,
   InterfaceTextResetInput,
   InterfaceTextSaveInput,
-  TranslateReason,
 } from "@repo/contracts";
 
 import { recordAudit } from "./index.ts";
 
-/** Keys "Translate missing with Google" fills per press (ADR-178 #5). */
+/** Keys one pass of the background fill translates (ADR-178 #5, ADR-189 #3). */
 export const INTERFACE_TEXT_FILL_LIMIT = 200;
 
 /**
@@ -144,10 +148,7 @@ export async function loadInterfaceText(
 }
 
 export type InterfaceTextRefusal =
-  | "unknownLocale"
-  | "unknownKey"
-  | "adminKey"
-  | MessageShapeProblem;
+  "unknownLocale" | "unknownKey" | "adminKey" | MessageShapeProblem;
 
 export type InterfaceTextSaveResult = { ok: true } | { ok: false; reason: InterfaceTextRefusal };
 
@@ -185,7 +186,7 @@ export async function saveInterfaceText(
         isMachine: false,
         updatedBy: userId,
       },
-      update: { value: input.value, isMachine: false, updatedBy: userId },
+      update: { value: input.value, isMachine: false, redo: false, updatedBy: userId },
     });
   }
   await recordAudit({
@@ -219,24 +220,179 @@ export async function resetInterfaceText(
   return { ok: true };
 }
 
-export type InterfaceTextFillResult =
-  | {
-      ok: true;
-      translated: number;
-      failed: number;
-      /** Missing keys the machine can translate, still to do. */
-      remaining: number;
-      /** Missing keys whose English the pipeline cannot take; a person writes these. */
-      manual: number;
-    }
-  | { ok: false; reason: "unknownLocale" | "isDefault" | TranslateReason };
+// ─── Machine fill, on the translation queue (ADR-189) ─────────────────────
 
 /**
- * "Translate missing with Google" (ADR-178 #5): up to
- * `INTERFACE_TEXT_FILL_LIMIT` missing public keys, through the ICU-safe
- * pipeline `pnpm translate:catalog` uses and the one metered door. Writes only
- * keys that still have no row when it commits (`skipDuplicates`), so a
- * person's text saved meanwhile is never replaced.
+ * Public strings missing in a language, split by whether the machine can take
+ * them. A machine string a reset marked `redo` (ADR-191) counts as missing
+ * too: it is work still to do, though it keeps its text meanwhile.
+ */
+async function missingInterfaceText(locale: string, defaultLocale: string) {
+  const [englishFile, englishMerged, target, redoRows] = await Promise.all([
+    loadCatalogFile(defaultLocale),
+    loadMergedCatalog(defaultLocale),
+    loadMergedCatalog(locale),
+    db.messageOverride.findMany({
+      where: { locale, isMachine: true, redo: true },
+      select: { key: true },
+    }),
+  ]);
+  const keys = publicKeys(englishFile);
+  const redo = new Set(redoRows.map((row) => row.key));
+  const missing = keys.filter(
+    (key) => redo.has(key) || typeof catalogValueAt(target, key) !== "string",
+  );
+  // A message the pipeline cannot plan fails the same way on every pass, so
+  // left in the queue it would sit at the front of every batch for ever.
+  const machinable = missing.filter((key) => {
+    try {
+      planMessage(catalogValueAt(englishMerged, key) as string);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return { total: keys.length, missing, machinable, englishMerged, redo };
+}
+
+export interface InterfaceTextCounts {
+  /** Public strings the site uses. */
+  total: number;
+  /** Of those, how many have no text in this language. */
+  missing: number;
+  /** Of the missing, how many only a person can write. */
+  manual: number;
+}
+
+/** How much of a language's interface text exists: the progress readout (ADR-189 #6). */
+export async function countInterfaceText(locale: string): Promise<InterfaceTextCounts> {
+  const defaultLocale = await defaultLocaleCode();
+  if (locale === defaultLocale) return { total: 0, missing: 0, manual: 0 };
+  const { total, missing, machinable } = await missingInterfaceText(locale, defaultLocale);
+  return { total, missing: missing.length, manual: missing.length - machinable.length };
+}
+
+interface FillPass {
+  translated: number;
+  failed: number;
+  /** Missing keys the machine can translate, still to do after this pass. */
+  remaining: number;
+}
+
+/**
+ * The queue's `entityType` for a language's interface text (ADR-189 #2): one
+ * ITEM job per language, `entityId` = the locale code.
+ */
+export const INTERFACE_TEXT_JOB_TYPE = "catalog";
+
+/**
+ * One pass: up to `INTERFACE_TEXT_FILL_LIMIT` missing public keys, through
+ * the ICU-safe pipeline `pnpm translate:catalog` uses and the one metered
+ * door. Writes only keys that still have no row when it commits
+ * (`skipDuplicates`), and rewrites a `redo` string only while it is still
+ * the machine's, so a person's text saved meanwhile is never replaced.
+ * A provider refusal propagates as its `TranslateError` for the queue to settle.
+ */
+async function fillInterfaceTextPass(locale: string, defaultLocale: string): Promise<FillPass> {
+  const { machinable, englishMerged, redo } = await missingInterfaceText(locale, defaultLocale);
+  const batch = machinable.slice(0, INTERFACE_TEXT_FILL_LIMIT);
+  if (batch.length === 0) return { translated: 0, failed: 0, remaining: 0 };
+
+  const source = Object.fromEntries(
+    batch.map((key) => [key, catalogValueAt(englishMerged, key) as string]),
+  );
+  const result = await translateCatalogMessages(source, locale, (units) =>
+    translateSegments(units, "html", {
+      source: defaultLocale,
+      target: locale,
+      userId: null,
+      entity: { type: INTERFACE_TEXT_JOB_TYPE, id: locale },
+    }),
+  );
+
+  const translated = Object.entries(result.translated);
+  if (translated.length > 0) {
+    const fresh = translated.filter(([key]) => !redo.has(key));
+    if (fresh.length > 0) {
+      await db.messageOverride.createMany({
+        data: fresh.map(([key, value]) => ({ locale, key, value, isMachine: true })),
+        skipDuplicates: true,
+      });
+    }
+    const redone = translated.filter(([key]) => redo.has(key));
+    if (redone.length > 0) {
+      // One statement for the whole batch: 200 round trips inside a
+      // transaction outlived Prisma's 5 s limit. The WHERE keeps the rule —
+      // a row a person saved meanwhile is no longer the machine's.
+      await db.$executeRawUnsafe(
+        `UPDATE message_overrides
+            SET value = CASE \`key\` ${redone.map(() => "WHEN ? THEN ?").join(" ")} END,
+                redo = FALSE, updatedAt = NOW(3)
+          WHERE locale = ? AND isMachine = TRUE AND redo = TRUE
+            AND \`key\` IN (${redone.map(() => "?").join(", ")})`,
+        ...redone.flat(),
+        locale,
+        ...redone.map(([key]) => key),
+      );
+    }
+    await invalidateMessages();
+  }
+  return {
+    translated: translated.length,
+    failed: result.failed.length,
+    remaining: machinable.length - translated.length,
+  };
+}
+
+/**
+ * A Sync "reset" (ADR-191): marks every machine string of a language for
+ * re-translation. Nothing is deleted, so the site keeps showing them until
+ * the fill job replaces each one. A person's strings are not touched.
+ */
+export async function markInterfaceTextForRedo(locale: string): Promise<number> {
+  const { count } = await db.messageOverride.updateMany({
+    where: { locale, isMachine: true },
+    data: { redo: true },
+  });
+  return count;
+}
+
+/** Queues (or re-arms) the background fill of one language's interface text. */
+export async function enqueueInterfaceTextFill(locale: string): Promise<void> {
+  await enqueueTranslationJobs([{ entityType: INTERFACE_TEXT_JOB_TYPE, entityId: locale, locale }]);
+}
+
+/**
+ * The job handler (ADR-189 #3): one pass, then `requeue` while the machine
+ * still has strings to do. A pass that wrote nothing while strings remain
+ * throws, so the queue's backoff and FAILED state apply rather than a loop
+ * that spends on the same strings for ever.
+ */
+export async function interfaceTextJobHandler(job: ClaimedJob): Promise<JobOutcome> {
+  const row = await db.locale.findUnique({
+    where: { code: job.locale },
+    select: { isDefault: true },
+  });
+  if (!row || row.isDefault) return "done";
+  const pass = await fillInterfaceTextPass(job.locale, await defaultLocaleCode());
+  if (pass.remaining === 0) return "done";
+  if (pass.translated === 0) {
+    throw new TranslateError(
+      "provider_error",
+      `Interface text for ${job.locale}: ${pass.failed} strings came back unusable`,
+    );
+  }
+  return "requeue";
+}
+
+export type InterfaceTextFillResult =
+  | { ok: true; remaining: number; manual: number }
+  | { ok: false; reason: "unknownLocale" | "isDefault" | "providerUnavailable" };
+
+/**
+ * "Translate missing automatically" (ADR-178 #5 as amended by ADR-189 #3):
+ * queues the background fill and says how much it has to do. Nothing is
+ * translated inside the request; the caller starts the queue in `after()`.
  */
 export async function fillInterfaceText(
   userId: string,
@@ -248,73 +404,16 @@ export async function fillInterfaceText(
   });
   if (!row) return { ok: false, reason: "unknownLocale" };
   if (row.isDefault) return { ok: false, reason: "isDefault" };
-  const defaultLocale = await defaultLocaleCode();
+  if (!(await isAutoTranslateAvailable())) return { ok: false, reason: "providerUnavailable" };
 
-  const [englishFile, englishMerged, target] = await Promise.all([
-    loadCatalogFile(defaultLocale),
-    loadMergedCatalog(defaultLocale),
-    loadMergedCatalog(row.code),
-  ]);
-  const missing = publicKeys(englishFile).filter(
-    (key) => typeof catalogValueAt(target, key) !== "string",
-  );
-  // A message the pipeline cannot plan fails the same way on every press, so
-  // left in the queue it would sit at the front of every batch for ever.
-  const machinable = missing.filter((key) => {
-    try {
-      planMessage(catalogValueAt(englishMerged, key) as string);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  const manual = missing.length - machinable.length;
-  const batch = machinable.slice(0, INTERFACE_TEXT_FILL_LIMIT);
-  if (batch.length === 0) return { ok: true, translated: 0, failed: 0, remaining: 0, manual };
-
-  const source = Object.fromEntries(
-    batch.map((key) => [key, catalogValueAt(englishMerged, key) as string]),
-  );
-  let result;
-  try {
-    result = await translateCatalogMessages(source, row.code, (units) =>
-      translateSegments(units, "html", {
-        source: defaultLocale,
-        target: row.code,
-        userId,
-        entity: { type: "catalog", id: row.code },
-      }),
-    );
-  } catch (error) {
-    return { ok: false, reason: reasonOf(error) };
-  }
-
-  const translated = Object.entries(result.translated);
-  if (translated.length > 0) {
-    await db.messageOverride.createMany({
-      data: translated.map(([key, value]) => ({
-        locale: row.code,
-        key,
-        value,
-        isMachine: true,
-        updatedBy: userId,
-      })),
-      skipDuplicates: true,
-    });
-    await invalidateMessages();
-  }
+  const { missing, machinable } = await missingInterfaceText(row.code, await defaultLocaleCode());
+  if (machinable.length > 0) await enqueueInterfaceTextFill(row.code);
   await recordAudit({
     userId,
     action: "messages.fill",
     entityType: "Locale",
     entityId: row.code,
-    changes: { after: { translated: translated.length, failed: result.failed.length } },
+    changes: { after: { queued: machinable.length } },
   });
-  return {
-    ok: true,
-    translated: translated.length,
-    failed: result.failed.length,
-    remaining: machinable.length - translated.length,
-    manual,
-  };
+  return { ok: true, remaining: machinable.length, manual: missing.length - machinable.length };
 }

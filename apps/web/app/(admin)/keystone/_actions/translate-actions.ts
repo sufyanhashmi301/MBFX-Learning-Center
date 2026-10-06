@@ -17,6 +17,7 @@ import {
   type InterfaceTextSaveResult,
   type LocaleDeleteResult,
   type LocaleSaveResult,
+  drainTranslationQueue,
   retryFailedTranslations,
   runTranslationWork,
   saveSettingTranslation,
@@ -36,6 +37,7 @@ import {
   localeSaveSchema,
   settingTranslationSaveSchema,
   translationScopeSchema,
+  translationSyncSchema,
   translatePrefillSchema,
   translateSettingsSaveSchema,
   translateTestSchema,
@@ -115,6 +117,18 @@ function kickQueue(): void {
 }
 
 /**
+ * A whole drain after the response (ADR-189 #5), for the actions whose point
+ * is "translate this now": Sync, Retry and the interface-text fill. It runs
+ * for the cron's own budget and stops early when the queue empties; the cron
+ * picks up whatever is left. A second runner is safe, claims are atomic.
+ */
+function drainQueue(): void {
+  after(async () => {
+    await drainTranslationQueue();
+  });
+}
+
+/**
  * Languages tab: switch a locale on or off (ADR-163 #2/#4). `locales.manage`;
  * the service refuses a locale that cannot be served properly and says why.
  */
@@ -126,12 +140,16 @@ export async function setLocaleActiveAction(input: unknown): Promise<LocaleActiv
   return result;
 }
 
-/** Overview: Sync one active locale, or every one (ADR-163 #5). */
+/**
+ * Sync one language, or every one that is not the default, live or not —
+ * interface text and content alike (ADR-189 #1/#2) — missing only or reset
+ * (ADR-191). Drawn on Overview, Interface text and Languages.
+ */
 export async function syncTranslationsAction(input: unknown): Promise<TranslationScopeResult> {
   const subject = await requirePermission("translations.approve");
-  const parsed = translationScopeSchema.parse(input);
+  const parsed = translationSyncSchema.parse(input);
   const result = await syncTranslations(subject.id, parsed);
-  if (result.ok) kickQueue();
+  if (result.ok) drainQueue();
   return result;
 }
 
@@ -142,7 +160,7 @@ export async function retryFailedTranslationsAction(
   const subject = await requirePermission("translations.approve");
   const parsed = translationScopeSchema.parse(input);
   const result = await retryFailedTranslations(subject.id, parsed);
-  if (result.ok && result.count > 0) kickQueue();
+  if (result.ok && result.count > 0) drainQueue();
   return result;
 }
 
@@ -203,11 +221,14 @@ export async function resetInterfaceTextAction(input: unknown): Promise<{ ok: tr
 }
 
 /**
- * Interface text, "Translate missing with Google". `translations.approve`,
- * the key Sync uses, because it spends the translation budget.
+ * Interface text, "Translate missing automatically". `translations.approve`,
+ * the key Sync uses, because it spends the translation budget. Queues the
+ * language's fill and drains in the background (ADR-189 #3).
  */
 export async function fillInterfaceTextAction(input: unknown): Promise<InterfaceTextFillResult> {
   const subject = await requirePermission("translations.approve");
   const parsed = interfaceTextFillSchema.parse(input);
-  return fillInterfaceText(subject.id, parsed);
+  const result = await fillInterfaceText(subject.id, parsed);
+  if (result.ok && result.remaining > 0) drainQueue();
+  return result;
 }

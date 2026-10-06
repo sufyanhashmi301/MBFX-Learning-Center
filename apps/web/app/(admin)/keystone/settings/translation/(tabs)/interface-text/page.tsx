@@ -1,8 +1,9 @@
 import { getTranslations } from "next-intl/server";
-import { INTERFACE_TEXT_FILL_LIMIT, loadInterfaceText } from "@repo/core";
+import { loadInterfaceText, loadTranslationProgress } from "@repo/core";
 import { loadAuthoringLocales } from "@repo/i18n";
 import { can, requirePermission } from "@repo/rbac";
 import { isAutoTranslateAvailable } from "@repo/translate";
+import { TranslationProgressPanel } from "../translation-progress.tsx";
 import { InterfaceTextTable } from "./interface-text-table.tsx";
 
 // Settings → Translation → Interface text (ADR-178 #3–#5): the site's fixed
@@ -10,8 +11,9 @@ import { InterfaceTextTable } from "./interface-text-table.tsx";
 // beside each. Both choices are the ADDRESS (`?locale=&ns=`), like Site text,
 // so a reload or a shared link keeps them.
 //
-// `translations.update` to open and edit; "Translate missing with Google" also
-// needs `translations.approve` and a configured provider. Every action
+// `translations.update` to open and edit; "Translate missing automatically"
+// also needs `translations.approve` and a configured provider, and runs in the
+// background with its progress drawn above the table (ADR-189). Every action
 // re-checks its own key.
 export default async function InterfaceTextPage({
   searchParams,
@@ -35,12 +37,26 @@ export default async function InterfaceTextPage({
   const view = await loadInterfaceText(current.code, typeof ns === "string" ? ns : undefined);
   const canFill =
     !view.isDefault && can(subject, "translations.approve") && (await isAutoTranslateAvailable());
+  // The bar is a `translations.view` read, like the endpoint it polls.
+  const progress =
+    !view.isDefault && can(subject, "translations.view")
+      ? await loadTranslationProgress({ locale: current.code })
+      : [];
 
   return (
     <>
       <p className="text-sm text-muted-foreground">
         {view.isDefault ? t("englishIntro") : t("intro")}
       </p>
+      {progress.length > 0 && (
+        <TranslationProgressPanel
+          key={current.code}
+          initial={progress}
+          locale={current.code}
+          refreshWhileWorking
+          canSync={canFill}
+        />
+      )}
       <InterfaceTextTable
         locale={current.code}
         direction={current.direction === "RTL" ? "rtl" : "ltr"}
@@ -50,7 +66,6 @@ export default async function InterfaceTextPage({
         namespace={view.namespace}
         rows={view.rows}
         canFill={canFill}
-        fillLimit={INTERFACE_TEXT_FILL_LIMIT}
       />
     </>
   );

@@ -48,13 +48,12 @@ export { toCoverage, type CoverageBucket, type CoverageCounts } from "./translat
 export * from "./translation-admin.ts";
 export * from "./languages.ts";
 export * from "./interface-text.ts";
-// Translatable settings (ADR-165): the Site text editor, the English save's
-// sweep, and the activation gate's human-only keys.
+// Translatable settings (ADR-165): the Site text editor and the English save's
+// sweep.
 export {
   afterSettingsSaved,
   loadSiteText,
   saveSettingTranslation,
-  siteTextGaps,
   type SaveSettingTranslationResult,
   type SiteTextEntry,
   type SiteTextField,

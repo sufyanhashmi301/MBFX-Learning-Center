@@ -7,8 +7,7 @@ import { SiteTextLanguagePicker } from "./language-picker.tsx";
 
 // Settings → Translation → Site text (ADR-165 #8): the words from Settings a
 // reader sees, in another language. Any non-default language, live or not,
-// so a language's legal lines can be written BEFORE it is switched on — which
-// is the only order ADR-165 #9 allows.
+// so a person can correct the machine's words before it is switched on.
 //
 // `settings.update` and `translations.update`, both re-checked by the action.
 export default async function SiteTextPage({
@@ -37,8 +36,6 @@ export default async function SiteTextPage({
     cleared: t("siteText.cleared"),
     blankHint: t("siteText.blankHint"),
     emptyEnglish: t("siteText.emptyEnglish"),
-    humanOnly: t("siteText.humanOnly"),
-    humanOnlyHint: t("siteText.humanOnlyHint"),
     machineHint: t("siteText.machineHint"),
     statuses: {
       missing: t("siteText.statusMissing"),

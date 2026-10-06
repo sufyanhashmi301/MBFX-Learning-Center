@@ -28180,3 +28180,179 @@ should gain it in the same PR (code-style.md #2).
 (hi/ur/zh) and asserts that a routable-but-unoffered `fr` is refused and
 never listed. With `translation-admin`, 20/20 against MariaDB. `tsc` is clean
 on core and i18n.
+
+## 2026-10-05 — Module 12/14: changes-65 follow-up (speed fixes, notifications data, cross-browser)
+
+The owner asked for every suggestion in the entry above to be applied, and
+allowed the production read and the browser run.
+
+**Home page is prerendered (ADR-187).** The promotions band now reads
+`getLivePromotionsForBand` (`@repo/core`, `cacheLife` 60/60/300, tag
+`content`) instead of `connection()` + the 120-second `getLivePromotions`. A
+local production build lists `/en` and `/ar` as `○` static (revalidate 1m,
+expire 5m) with no cache-warming warning. Before, it was the one dynamic hole
+that made every `/` response `private, no-store`. A promotion now starts or
+ends up to about a minute late. An admin save still shows at once.
+
+**Language redirects are `private, no-store`.** The proxy's two unprefixed
+redirects (the admin's default language and next-intl's browser detection)
+now say so. A CDN that caches HTML can therefore never replay one reader's
+`/news` → `/ar/news`. Pinned in `proxy.test.ts`.
+
+**Cloudflare.** A cache rule is not in this repo and needs the dashboard. It
+is written out in `docs/ops/deploy.md` §12, with why it is safe and a check.
+
+**Notifications on production.** Read-only. The `notifications` table holds
+0 rows, and there is one STAFF account. Every v1 event (role
+assigned/removed, admin password reset, employee status) targets ANOTHER staff
+member, and the AI budget events need AI switched on. With one admin, the bell
+has nothing to say. That is the empty state, not a fault.
+
+**Cross-browser, live site.** Ten pages at 1440 and 390 px in Chromium and
+WebKit: every page 200, no uncaught script errors, no horizontal overflow
+(including `/ar`).
+- Fixed: `401 /api/learn/progress` in the console of every signed-out visit
+  to `/learn`. `useLearnerDashboard` and `useQuizResults` now ask only for a
+  signed-in learner and answer `guest` at render otherwise.
+- Not fixed, by design: `ProgressProvider` (course and lesson pages) still
+  asks as a guest, because its `guest`/`off` split needs the server's answer.
+- Not ours: `requestStorageAccess: Permission denied` on `/support` and
+  `/keystone` comes from Google's reCAPTCHA frame.
+- Firefox did not run: its DLLs exist but Windows refuses to load them (Smart
+  App Control, as with `turbo.exe`).
+
+**Tests.**
+- `app/changes-65.test.ts` now has 9 tests, and `proxy.test.ts` has 1 new
+  test.
+- `apps/web` 3467/3474: the 7 failures are the changes-62 set.
+- `tsc` and ESLint are clean on web and core.
+
+**Not done.**
+- Commit and deploy (the owner's call).
+- The Cloudflare rule.
+- A Firefox run on another machine.
+
+## 2026-10-06 — Module 06/09: Sync translates a whole language in the background (ADR-189)
+
+The owner asked for Sync to translate every interface string and every piece
+of content in the background, with its progress shown.
+
+**Decision.** ADR-189 amends ADR-163 #4/#5 and ADR-178 #5.
+- Sync now works for any language that is not the default, live or not.
+  "Sync all languages" covers every one of them. The go-live gate is
+  unchanged.
+- Sync queues the content backfill plus one interface-text job per language.
+  That job is an ITEM with entityType "catalog", so it needs no migration.
+- The interface-text job translates 200 strings a pass and requeues itself
+  until nothing machine-translatable is missing. It never replaces a
+  person's row. A pass that writes nothing throws, so the job backs off.
+- "Translate missing automatically" on Interface text queues the same job
+  instead of translating inside the request.
+- The runner now works for any non-default language that exists. Switching
+  a language off deletes its PENDING jobs (`cancelPendingLocaleJobs`), which
+  is what keeps "off stops spending" true.
+- Sync, Retry and the fill drain the queue in `after()` for the cron's
+  budget, so the work starts at once.
+- Sync refuses with `providerUnavailable` when no provider is configured.
+
+**Progress.**
+- New `GET /keystone/api/translate/progress` (`translations.view`) backed by
+  `loadTranslationProgress` (`@repo/core`). Per language it returns interface
+  text done/total, content done/total, queued and failed counts, and the
+  pause reason (`loadPausedLocales`).
+- `TranslationProgressPanel` shows it on Overview (every language) and on
+  Interface text (the selected one). It polls every 3 s only while work is
+  queued, stops when idle (ADR-105), and refreshes the page once at the end.
+- Interface text also refreshes its table as strings land.
+- The new route is in the learner probe list.
+
+**Tests.**
+- `languages.integration` and `translation-admin.integration`: 21/21 against
+  MariaDB.
+  - New: a queued fill for an OFF language drains to completion through the
+    fake provider and keeps a person's string.
+  - New: Sync queues both kinds of job for an off language, and switching off
+    cancels them.
+  - Rewritten: the old "refuses an inactive locale" and "inactive work is
+    skipped" cases.
+- Other translation suites: 55/56. The one failure is
+  `article-translation.integration` "gives the Spanish row its own slug". It
+  runs on an active locale, so this change does not touch it. It still
+  expects the per-language slug that ADR-181 replaced; that needs fixing
+  separately.
+- `@repo/translate`: 135/135.
+- `apps/web`: 3472/3479. The 7 failures are the known changes-62 set.
+- `tsc` is clean on core, translate and web. ESLint and Prettier are clean on
+  touched files. `check:catalog-completeness`, `check:permission-keys` and
+  `check:phantom-deps` pass.
+- Browser (local dev, signed in as the seed admin): Overview shows five
+  language cards with bars, and Interface text shows Hindi at 0/1,448 and
+  0/279. The endpoint answers 200.
+
+**Not done.**
+- No end-to-end press against a real provider: the local provider has no key.
+- Commit and deploy.
+- Production still needs the 5-minute translate cron for work that outlives
+  the `after()` drain.
+
+## 2026-10-06 — Module 05/06/09: legal site text is machine-translated (ADR-190)
+
+**What shipped.** The owner asked that, with automatic translation on, ALL
+site text translate itself. Four of the six translatable settings already
+did; the two `legal` keys (risk disclaimer, copyright line) were human-only
+and gated go-live (ADR-165 #6/#9). ADR-190 supersedes both points:
+- `TRANSLATABLE_SETTINGS` loses its `machine` flag; every key with words is
+  queued on an English save and walked by a backfill.
+- `siteTextGaps`, the `siteTextIncomplete` refusal, the checklist's "Legal
+  site text" item and the Site text tab's "Written by a person" badge are
+  removed, with their catalog keys. Two hints that said legal text is never
+  machine-translated were corrected.
+- A person's row is still never overwritten (engine unchanged); the seeded
+  Arabic NEEDS_REVIEW legal rows stay.
+
+**Tests.** `setting-translation.integration` 11/11 against MariaDB. The
+human-only and go-live cases were rewritten: a legal save is translated, a
+person's disclaimer is flagged OUTDATED and kept, switching a language on is
+not refused, and its backfill translates both legal lines. `tsc` is clean on
+core and web.
+
+**Not done.** Commit and deploy. On production, press Sync to fill the legal
+lines of languages prepared before this change.
+
+## 2026-10-06 — Module 06/09: Sync missing only or reset, on every tab (ADR-191)
+
+**What shipped.** Sync now asks what to translate, and it can be started for
+one language from every translation tab.
+- **Modes.** "Only what is missing" is ADR-189's Sync. "Reset machine
+  translations" re-translates everything the machine wrote, in place, and
+  keeps every translation a person wrote (owner's choice).
+  - Content: the machine rows' `sourceHash` is cleared, so the backfill
+    redoes them.
+  - Interface text: the new `MessageOverride.redo` flag, set by the reset
+    and cleared by the fill job or by a person's save. Migration
+    `20261006120000_message_override_redo_adr191`.
+- **Where.** One `SyncDialog` with the mode choice is drawn on:
+  - each Overview progress card;
+  - the Overview table's row menu and "Sync all languages";
+  - the Interface text progress card;
+  - a new Sync button on each Languages row.
+
+  All are `translations.approve`.
+- The fill job writes a reset batch with one `UPDATE … CASE` statement: 200
+  updates inside a Prisma transaction ran past its 5 s limit (the first test
+  run caught it).
+
+**Tests.**
+- `translation-admin`, `languages` and `setting-translation` integration:
+  34/34 against MariaDB. New cases:
+  - a content reset re-translates a machine row in place, while missing-only
+    leaves it;
+  - an interface reset marks the strings, keeps their text, redoes them, and
+    keeps a person's string.
+- `@repo/contracts` 646/646.
+- The admin dialog, form and toolbar conventions: 1109/1109.
+- `tsc` is clean on core and web. ESLint is clean.
+  `check:catalog-completeness` and `governance:check` pass.
+
+**Not done.** Not clicked through in a browser. Run
+`pnpm db:deploy` on production for the new column. Commit and deploy.

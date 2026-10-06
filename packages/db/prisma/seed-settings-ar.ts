@@ -2,13 +2,13 @@
 // (ADR-165, ADR-166). `header.announcementBar` and `header.topBar` seed
 // empty, so there is nothing of theirs to translate.
 //
-// The two `legal` keys are human-only (ADR-165 #6), and switching Arabic on
-// is refused until they have a translation (`siteTextGaps`). These were
-// written in the development session, not by Google — the same footing as the
-// Arabic catalog (ADR-166) — but a legal statement still needs its owner's
-// sign-off, so they are seeded NEEDS_REVIEW: they are served and they satisfy
-// the gate, and they sit in Settings → Translation → Review until a person
-// saves them. Everything else here is TRANSLATED.
+// The two `legal` keys were written in the development session, not by a
+// provider — the same footing as the Arabic catalog (ADR-166) — but a legal
+// statement still needs its owner's sign-off, so they are seeded NEEDS_REVIEW:
+// they are served, and they sit in Settings → Translation → Review until a
+// person saves them. Everything else here is TRANSLATED. (They were human-only
+// and gated going live until ADR-190; the machine now translates them too, but
+// never over a row that is already here.)
 //
 // Stored the way `SettingTranslation.value` always is: the field map, with a
 // whole-value key's text under `value` (WHOLE_VALUE_FIELD). `{year}` is a

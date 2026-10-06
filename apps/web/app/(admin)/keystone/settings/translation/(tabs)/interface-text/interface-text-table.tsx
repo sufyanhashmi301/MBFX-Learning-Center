@@ -2,8 +2,10 @@
 
 // The Interface text table (ADR-178 #4/#5): one section of one language's
 // public strings, English beside each. Edit opens a dialog; Reset removes the
-// override after a confirmation (code-style.md #7); "Translate missing with
-// Google" sits on the title row (ADR-140 §3) and asks first, because it spends.
+// override after a confirmation (code-style.md #7); "Translate missing
+// automatically" sits on the title row (ADR-140 §3) and asks first, because it
+// spends. It queues the work; the progress panel above the table follows it
+// (ADR-189).
 //
 // The language and the section are the ADDRESS, not client state: changing
 // either is a navigation, and the server sends only that section's rows.
@@ -48,6 +50,7 @@ import { StatusBadge, type StatusTone } from "../../../../_components/status-bad
 import { useClientTable } from "../../../../_hooks/use-client-table.ts";
 import { useFieldErrors } from "../../../../_hooks/use-field-errors.ts";
 import { useServerAction } from "../../../../_hooks/use-server-action.ts";
+import { announceTranslationWork } from "../translation-work.ts";
 
 const STATE_TONE: Record<InterfaceTextState, StatusTone> = {
   shipped: "neutral",
@@ -70,7 +73,6 @@ export function InterfaceTextTable({
   namespace,
   rows,
   canFill,
-  fillLimit,
 }: {
   locale: string;
   direction: "ltr" | "rtl";
@@ -80,7 +82,6 @@ export function InterfaceTextTable({
   namespace: string | null;
   rows: InterfaceTextRow[];
   canFill: boolean;
-  fillLimit: number;
 }) {
   const t = useTranslations("admin.translate.interfaceText");
   const tAdmin = useTranslations("admin");
@@ -119,14 +120,14 @@ export function InterfaceTextTable({
         const result = await fillInterfaceTextAction({ locale });
         if (!result.ok) {
           throw new Error(
-            result.reason === "isDefault" || result.reason === "unknownLocale"
-              ? t(`refusals.${result.reason}`)
-              : tAdmin(`translate.reasons.${result.reason}`),
+            result.reason === "providerUnavailable"
+              ? tAdmin("translate.reasons.not_configured")
+              : t(`refusals.${result.reason}`),
           );
         }
+        if (result.remaining > 0) announceTranslationWork();
         const notes = [
-          t("filled", { translated: result.translated, remaining: result.remaining }),
-          result.failed > 0 ? t("fillFailed", { failed: result.failed }) : null,
+          t("fillQueued", { remaining: result.remaining }),
           result.manual > 0 ? t("fillManual", { manual: result.manual }) : null,
         ];
         toast.success(notes.filter(Boolean).join(" "));
@@ -150,9 +151,7 @@ export function InterfaceTextTable({
         header: t("colEnglish"),
         meta: { label: t("colEnglish") },
         cell: ({ row }) => (
-          <p className="max-w-80 text-sm break-words whitespace-pre-line">
-            {row.original.english}
-          </p>
+          <p className="max-w-80 text-sm break-words whitespace-pre-line">{row.original.english}</p>
         ),
       },
       ...(isDefault
@@ -253,12 +252,7 @@ export function InterfaceTextTable({
 
   return (
     <>
-      <DataTable
-        {...tableProps}
-        columns={columns}
-        labels={tableLabels}
-        filters={filters}
-      />
+      <DataTable {...tableProps} columns={columns} labels={tableLabels} filters={filters} />
       {canFill && (
         <HeaderActions>
           <Button size="sm" disabled={pending} onClick={() => setFilling(true)}>
@@ -290,7 +284,7 @@ export function InterfaceTextTable({
         open={filling}
         onOpenChange={setFilling}
         title={t("fillTitle")}
-        description={t("fillBody", { limit: fillLimit })}
+        description={t("fillBody")}
         confirmLabel={t("fill")}
         cancelLabel={tAdmin("cancel")}
         onConfirm={fill}

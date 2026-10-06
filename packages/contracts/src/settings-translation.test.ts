@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { validateFields } from "./field-issues.ts";
-import { SETTINGS_SCHEMAS, SETTING_GROUPS } from "./settings.ts";
+import { SETTINGS_SCHEMAS } from "./settings.ts";
 import {
   TRANSLATABLE_SETTINGS,
   TRANSLATABLE_SETTING_KEYS,
@@ -19,13 +19,6 @@ describe("TRANSLATABLE_SETTINGS (ADR-165)", () => {
   it("names only real setting keys", () => {
     for (const key of TRANSLATABLE_SETTING_KEYS) {
       expect(key in SETTINGS_SCHEMAS).toBe(true);
-    }
-  });
-
-  it("keeps the whole `legal` group human-only (ADR-165 #6)", () => {
-    for (const key of TRANSLATABLE_SETTING_KEYS) {
-      const entry: TranslatableSetting = TRANSLATABLE_SETTINGS[key];
-      if (SETTING_GROUPS[key] === "legal") expect(entry.machine).toBe(false);
     }
   });
 

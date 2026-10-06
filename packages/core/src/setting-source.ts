@@ -22,8 +22,6 @@ export interface SettingSource {
   key: TranslatableSettingKey;
   group: string;
   label: string;
-  /** Whether the machine may translate it (ADR-165 #6). */
-  machine: boolean;
   fields: SettingTextFields;
 }
 
@@ -43,13 +41,11 @@ type SettingRow = { id: string; key: string; label: string; value: Prisma.JsonVa
 
 function toSource(row: SettingRow): SettingSource | null {
   if (!isTranslatableSettingKey(row.key)) return null;
-  const entry: TranslatableSetting = TRANSLATABLE_SETTINGS[row.key];
   return {
     id: row.id,
     key: row.key,
     group: SETTING_GROUPS[row.key],
     label: row.label,
-    machine: entry.machine,
     fields: settingTextFields(row.key, row.value),
   };
 }

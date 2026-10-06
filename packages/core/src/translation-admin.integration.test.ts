@@ -237,13 +237,9 @@ describe("activating a language (ADR-163 #2)", () => {
     expect(languages.rows.find((r) => r.code === "es")!.estimate.characters).toBe(0);
   });
 
-  it("switching off keeps translations, and queued work finishes without Google", async () => {
+  it("switching off keeps translations and cancels queued work (ADR-189 #4)", async () => {
     await resetLocale(true);
     const before = (await spanishRows()).length;
-    expect(await admin.setLocaleActive(userId, { locale: "es", active: false })).toEqual({
-      ok: true,
-      backfillQueued: false,
-    });
     await translate.enqueueTranslationJobs(
       (await spanishRows()).map((r) => ({
         entityType: "article",
@@ -251,8 +247,13 @@ describe("activating a language (ADR-163 #2)", () => {
         locale: "es",
       })),
     );
+    expect(await admin.setLocaleActive(userId, { locale: "es", active: false })).toEqual({
+      ok: true,
+      backfillQueued: false,
+    });
+    expect(await db.translationJob.count({ where: { locale: "es", status: "PENDING" } })).toBe(0);
     const drained = await runner.drainTranslationQueue();
-    expect(drained.skipped).toBe(before);
+    expect(drained.claimed).toBe(0);
     expect(google.calls).toHaveLength(0);
     expect((await spanishRows()).length).toBe(before);
     expect(await db.auditLog.count({ where: { action: "locales.deactivate" } })).toBe(1);
@@ -268,7 +269,7 @@ describe("sync, review and retry (ADR-163 #5)", () => {
       data: { translationStatus: "TRANSLATED", sourceHash: null, title: "Revisado" },
     });
 
-    expect(await admin.syncTranslations(userId, { locale: "es" })).toEqual({
+    expect(await admin.syncTranslations(userId, { locale: "es", mode: "missing" })).toEqual({
       ok: true,
       locales: ["es"],
       count: 1,
@@ -299,16 +300,60 @@ describe("sync, review and retry (ADR-163 #5)", () => {
     expect(await db.auditLog.count({ where: { action: "translations.sync" } })).toBe(1);
   });
 
-  it("refuses to sync an inactive locale", async () => {
+  it("a reset re-translates machine rows in place; missing-only leaves them (ADR-191)", async () => {
+    await resetLocale(true);
+    const machine = (await spanishRows()).find((r) => r.translationStatus === "MACHINE_TRANSLATED");
+    if (!machine) throw new Error("expected a machine row");
+    await db.articleTranslation.update({
+      where: { id: machine.id },
+      data: { title: "Old machine words" },
+    });
+    const person = await db.articleTranslation.findFirstOrThrow({
+      where: { locale: "es", translationStatus: { not: "MACHINE_TRANSLATED" } },
+    });
+
+    // Missing only: the machine row's English has not moved, so it stays.
+    await admin.syncTranslations(userId, { locale: "es", mode: "missing" });
+    await runner.drainTranslationQueue();
+    expect(
+      await db.articleTranslation.findUniqueOrThrow({ where: { id: machine.id } }),
+    ).toMatchObject({ title: "Old machine words" });
+
+    await admin.syncTranslations(userId, { locale: "es", mode: "reset" });
+    // Marked in place: still served with its old words until the job runs.
+    expect(
+      await db.articleTranslation.findUniqueOrThrow({ where: { id: machine.id } }),
+    ).toMatchObject({ title: "Old machine words", sourceHash: null });
+    await runner.drainTranslationQueue();
+
+    const redone = await db.articleTranslation.findUniqueOrThrow({ where: { id: machine.id } });
+    expect(redone.title).not.toBe("Old machine words");
+    expect(redone.translationStatus).toBe("MACHINE_TRANSLATED");
+    expect(redone.sourceHash).not.toBeNull();
+    const kept = await db.articleTranslation.findUniqueOrThrow({ where: { id: person.id } });
+    expect(kept).toMatchObject({
+      title: person.title,
+      translationStatus: person.translationStatus,
+    });
+    await db.translationJob.deleteMany();
+  });
+
+  it("syncs a language that is not live, and refuses one that does not exist (ADR-189 #1)", async () => {
     await resetLocale(false);
-    expect(await admin.syncTranslations(userId, { locale: "es" })).toEqual({
+    expect(await admin.syncTranslations(userId, { locale: "fr", mode: "missing" })).toEqual({
       ok: false,
-      reason: "inactiveLocale",
+      reason: "unknownLocale",
     });
-    expect(await admin.syncTranslations(userId, {})).toEqual({
+    expect(await admin.syncTranslations(userId, { locale: "en", mode: "missing" })).toEqual({
       ok: false,
-      reason: "noActiveLocale",
+      reason: "unknownLocale",
     });
+    expect(await admin.syncTranslations(userId, { mode: "missing" })).toEqual({
+      ok: true,
+      locales: ["es"],
+      count: 1,
+    });
+    await db.translationJob.deleteMany();
   });
 
   it("a failure retries with backoff, surfaces as FAILED, and Retry re-arms it", async () => {

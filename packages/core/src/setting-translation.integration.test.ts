@@ -1,9 +1,9 @@
-// ADR-165 on a real MariaDB with Google faked (MSW): a machine key is
-// translated after an English save and read back merged over the English; a
-// `legal` key is never sent to Google, by a save or by a backfill; a person's
+// ADR-165 on a real MariaDB with Google faked (MSW): a key is translated after
+// an English save and read back merged over the English; a `legal` key is
+// translated like any other, by a save and by a backfill (ADR-190); a person's
 // save is TRANSLATED and flagged only when the WORDS move on; a result that
-// lost `{year}` is held for review; and a language cannot be switched on while
-// its disclaimer is missing.
+// lost `{year}` is held for review; and a missing disclaimer no longer keeps a
+// language from being switched on.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -16,7 +16,6 @@ import type * as RunnerModule from "./translation-runner.ts";
 import type * as AdminModule from "./translation-admin.ts";
 import type * as SettingTranslationModule from "./setting-translation.ts";
 import type * as SettingsModule from "@repo/settings";
-import type * as TranslateModule from "@repo/translate";
 
 let ctx: TranslationTestContext;
 let siteText: typeof SiteTextModule;
@@ -24,7 +23,6 @@ let runner: typeof RunnerModule;
 let admin: typeof AdminModule;
 let settingType: typeof SettingTranslationModule;
 let settings: typeof SettingsModule;
-let translate: typeof TranslateModule;
 
 const DISCLAIMER = "Trading CFDs involves a high level of risk. Registration 2023-00532.";
 const COPYRIGHT = "© {year} MBFX Global Limited. All rights reserved.";
@@ -54,7 +52,6 @@ beforeAll(async () => {
   admin = await import("./translation-admin.ts");
   settingType = await import("./setting-translation.ts");
   settings = await import("@repo/settings");
-  translate = await import("@repo/translate");
 
   const rows: Array<[string, string, unknown, string]> = [
     ["general", "site.description", "Free forex education.", "TEXT"],
@@ -204,77 +201,59 @@ describe("a person's translation", () => {
   });
 });
 
-describe("the legal group is human-only (ADR-165 #6)", () => {
-  it("is never sent to Google — not by a save, not by a language backfill", async () => {
+describe("the legal group is machine-translated (ADR-190)", () => {
+  it("is translated after an English save, like every other key", async () => {
     const google = useFakeGoogle(ctx.server);
     await saveEnglish("legal.riskDisclaimer", DISCLAIMER);
-    expect(
-      await ctx.db.translationJob.count({
-        where: { entityType: "setting", entityId: await idOf("legal.riskDisclaimer") },
-      }),
-    ).toBe(0);
-
-    await translate.enqueueLocaleBackfill("es");
-    await runner.drainTranslationQueue();
-    const sent = google.calls.flatMap((c) => c.body.q).join("\n");
-    expect(sent).not.toContain("Trading CFDs");
-    expect(sent).not.toContain("MBFX Global Limited");
-    expect(await rowOf("legal.riskDisclaimer", "es")).toBeNull();
+    expect(google.calls.flatMap((c) => c.body.q)).toContain(DISCLAIMER);
+    expect(await rowOf("legal.riskDisclaimer", "es")).toMatchObject({
+      translationStatus: "MACHINE_TRANSLATED",
+      value: { value: `[es] ${DISCLAIMER}` },
+    });
   });
 
-  it("but a person's disclaimer is flagged when the English changes", async () => {
+  it("but a person's disclaimer is flagged when the English changes, never overwritten", async () => {
     await siteText.saveSettingTranslation(ctx.editor.id, {
       locale: "es",
       key: "legal.riskDisclaimer",
       fields: { value: "Operar con CFD implica un alto riesgo. Registro 2023-00532." },
     });
+    const google = useFakeGoogle(ctx.server);
     await saveEnglish("legal.riskDisclaimer", `${DISCLAIMER} Updated.`);
     expect(await rowOf("legal.riskDisclaimer", "es")).toMatchObject({
       translationStatus: "OUTDATED",
+      value: { value: "Operar con CFD implica un alto riesgo. Registro 2023-00532." },
     });
+    expect(google.calls).toHaveLength(0);
   });
 });
 
-async function idOf(key: string) {
-  return (await ctx.db.setting.findUniqueOrThrow({ where: { key }, select: { id: true } })).id;
-}
-
-describe("switching a language on (ADR-165 #9)", () => {
+describe("switching a language on (ADR-190)", () => {
   const completeCatalog = { catalogGaps: async () => [] as string[] };
 
-  it("is refused while a legal key has no translation, and allowed once both do", async () => {
-    expect(await siteText.siteTextGaps("ar")).toEqual([
-      "legal.riskDisclaimer",
-      "legal.copyrightNotice",
-    ]);
-    expect(
-      await admin.setLocaleActive(ctx.editor.id, { locale: "ar", active: true }, completeCatalog),
-    ).toEqual({ ok: false, reason: "siteTextIncomplete" });
-    expect((await ctx.db.locale.findUniqueOrThrow({ where: { code: "ar" } })).isActive).toBe(false);
-
-    await siteText.saveSettingTranslation(ctx.editor.id, {
-      locale: "ar",
-      key: "legal.riskDisclaimer",
-      fields: { value: "تداول العقود مقابل الفروقات ينطوي على مخاطر عالية." },
-    });
-    await siteText.saveSettingTranslation(ctx.editor.id, {
-      locale: "ar",
-      key: "legal.copyrightNotice",
-      fields: { value: "© {year} MBFX Global Limited. جميع الحقوق محفوظة." },
-    });
-    expect(await siteText.siteTextGaps("ar")).toEqual([]);
-
-    const languages = await admin.loadLanguagesView();
-    expect(languages.rows.find((r) => r.code === "ar")?.siteTextGaps).toBe(0);
+  it("is not refused for legal text no person wrote, and its backfill translates it", async () => {
+    expect(await rowOf("legal.riskDisclaimer", "ar")).toBeNull();
     expect(
       await admin.setLocaleActive(ctx.editor.id, { locale: "ar", active: true }, completeCatalog),
     ).toEqual({ ok: true, backfillQueued: true });
+
+    const google = useFakeGoogle(ctx.server);
+    await runner.drainTranslationQueue();
+    const sent = google.calls.flatMap((c) => c.body.q);
+    expect(sent).toContain(COPYRIGHT);
+    expect(await rowOf("legal.riskDisclaimer", "ar")).toMatchObject({
+      translationStatus: "MACHINE_TRANSLATED",
+    });
+    expect(await rowOf("legal.copyrightNotice", "ar")).toMatchObject({
+      translationStatus: "MACHINE_TRANSLATED",
+      value: { value: `[ar] ${COPYRIGHT}` },
+    });
     await admin.setLocaleActive(ctx.editor.id, { locale: "ar", active: false });
   });
 });
 
 describe("the dashboard", () => {
-  it("counts every key with words, legal ones included, and lists machine rows for review", async () => {
+  it("counts every key with words, and lists machine rows for review", async () => {
     const coverage = await settingType.settingTranslatable.coverage("es", "en");
     // cta, description, disclaimer, copyright have words; the two bars do not.
     expect(coverage.total).toBe(4);
@@ -288,16 +267,20 @@ describe("the dashboard", () => {
     expect(review.every((r) => r.entityType === "setting")).toBe(true);
   });
 
-  it("estimates only the machine keys a backfill would send", async () => {
-    const estimate = await settingType.settingTranslatable.estimate(["ar"], "en");
-    const cta = await ctx.db.setting.findUniqueOrThrow({ where: { key: "header.cta" } });
-    const description = await ctx.db.setting.findUniqueOrThrow({
-      where: { key: "site.description" },
-    });
-    const words = [(cta.value as { label: string }).label, description.value as string].reduce(
-      (sum, text) => sum + text.length,
-      0,
-    );
-    expect(estimate.get("ar")).toBe(words);
+  it("estimates every key with words a backfill would send, legal ones included", async () => {
+    // A language with no rows yet, so nothing is skipped as already translated.
+    const estimate = await settingType.settingTranslatable.estimate(["fr"], "en");
+    const keys = [
+      "header.cta",
+      "site.description",
+      "legal.riskDisclaimer",
+      "legal.copyrightNotice",
+    ];
+    const rows = await ctx.db.setting.findMany({ where: { key: { in: keys } } });
+    const words = rows.reduce((sum, row) => {
+      const value = row.value as string | { label: string };
+      return sum + (typeof value === "string" ? value : value.label).length;
+    }, 0);
+    expect(estimate.get("fr")).toBe(words);
   });
 });

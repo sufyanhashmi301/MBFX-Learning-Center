@@ -64,6 +64,8 @@ export {
   expandBackfill,
   parseBackfillCursor,
   retryFailedJobs,
+  cancelPendingLocaleJobs,
+  loadPausedLocales,
   countJobs,
   loadBackfillStates,
   listFailedJobs,

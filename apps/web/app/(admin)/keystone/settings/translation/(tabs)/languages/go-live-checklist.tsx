@@ -23,8 +23,6 @@ export interface ChecklistLanguage {
   name: string;
   /** Public interface strings missing; null when the site cannot route it. */
   catalogGaps: number | null;
-  /** Legal site text with no translation (never machine-translated). */
-  siteTextGaps: number;
 }
 
 const ROOT = "/keystone/settings/translation";
@@ -33,12 +31,10 @@ export function GoLiveChecklist({
   language,
   onClose,
   canEditInterfaceText,
-  canEditSiteText,
 }: {
   language: ChecklistLanguage | null;
   onClose: () => void;
   canEditInterfaceText: boolean;
-  canEditSiteText: boolean;
 }) {
   const t = useTranslations("admin.translate.languages.checklist");
   const items = language
@@ -55,19 +51,6 @@ export function GoLiveChecklist({
             ? `${ROOT}/interface-text?locale=${encodeURIComponent(language.code)}`
             : null,
           action: t("interfaceTextAction"),
-        },
-        {
-          key: "siteText",
-          done: language.siteTextGaps === 0,
-          title: t("siteTextTitle"),
-          detail:
-            language.siteTextGaps === 0
-              ? t("siteTextDone")
-              : t("siteTextMissing", { count: language.siteTextGaps }),
-          href: canEditSiteText
-            ? `${ROOT}/site-text?locale=${encodeURIComponent(language.code)}`
-            : null,
-          action: t("siteTextAction"),
         },
       ]
     : [];

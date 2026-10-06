@@ -110,3 +110,17 @@ Arabic noun's form depends on the number.
 - **The proxy only lets browser-language detection land on a SERVED
   language** (`intlServed` + `GET /api/locales`); otherwise `/` answers in
   the default language.
+
+## Sync prepares a whole language in the background (ADR-189)
+
+- **Sync covers interface text AND content**, for any non-default language,
+  live or not: a `BACKFILL_LOCALE` walk plus one ITEM job with
+  `entityType = "catalog"` (`INTERFACE_TEXT_JOB_TYPE`) that fills 200
+  strings a pass and requeues itself. "Translate missing automatically"
+  queues the same job; nothing translates inside a request.
+- **The runner works for every non-default language row**; switching one off
+  deletes its PENDING jobs (`cancelPendingLocaleJobs`). Saves still enqueue
+  for live languages only.
+- **Progress** is `loadTranslationProgress` behind
+  `GET /keystone/api/translate/progress`, drawn by `TranslationProgressPanel`,
+  which polls only while work is queued.

@@ -9,7 +9,9 @@
 // heading) and the per-language ones in each row's menu. "Retry all failed"
 // appears only while something has failed.
 // Both confirm first: Sync can spend characters, and a confirmation is where
-// that is said (code-style.md #7's reasoning, applied to money).
+// that is said (code-style.md #7's reasoning, applied to money). Sync's
+// confirmation is the shared `SyncDialog`, which also asks missing or reset
+// (ADR-191).
 import { useMemo, useState } from "react";
 import { CircleCheck, Languages, MoreHorizontal, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
@@ -26,15 +28,14 @@ import {
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "@repo/ui/components/empty";
 import { FilterBarRow } from "@repo/ui/components/filter-bar";
 import { ProgressBar } from "@repo/ui/components/progress-bar";
-import {
-  retryFailedTranslationsAction,
-  syncTranslationsAction,
-} from "../../../_actions/translate-actions.ts";
+import { retryFailedTranslationsAction } from "../../../_actions/translate-actions.ts";
 import { AdminCombobox } from "../../../_components/combobox.tsx";
 import { HeaderActions } from "../../../_components/header-actions.tsx";
 import { StatusBadge } from "../../../_components/status-badge.tsx";
 import { useClientTable } from "../../../_hooks/use-client-table.ts";
 import { useServerAction } from "../../../_hooks/use-server-action.ts";
+import { SyncButton, SyncDialog, type SyncTarget } from "./sync-dialog.tsx";
+import { announceTranslationWork } from "./translation-work.ts";
 
 export interface LocaleRow {
   code: string;
@@ -97,20 +98,15 @@ export interface OverviewLabels {
   failedCount: string;
   backfilling: string;
   sync: string;
-  syncAll: string;
   retryFailed: string;
   retryAll: string;
   openActions: string;
-  syncTitle: string;
-  syncAllTitle: string;
-  syncBody: string;
   retryTitle: string;
   retryBody: string;
   confirm: string;
   cancel: string;
-  syncDone: string;
   retryDone: string;
-  refusals: { inactiveLocale: string; noActiveLocale: string };
+  refusals: { unknownLocale: string; noLocale: string; providerUnavailable: string };
   noLocalesTitle: string;
   noLocalesBody: string;
   failuresSearch: string;
@@ -142,8 +138,8 @@ function tableLabels(labels: OverviewLabels, search: string): DataTableLabels {
   };
 }
 
-/** Pending confirmation: Sync (one locale or all) or Retry (one locale or all). */
-type Pending = { kind: "sync" | "retry"; locale?: string; language?: string } | null;
+/** Pending confirmation: Retry, for one locale or all. Sync has its own dialog. */
+type Pending = { locale?: string } | null;
 
 function useScopedActions(labels: OverviewLabels) {
   const { run, pending: busy } = useServerAction();
@@ -153,14 +149,10 @@ function useScopedActions(labels: OverviewLabels) {
     if (!pending) return;
     const input = pending.locale ? { locale: pending.locale } : {};
     run(async () => {
-      const result =
-        pending.kind === "sync"
-          ? await syncTranslationsAction(input)
-          : await retryFailedTranslationsAction(input);
+      const result = await retryFailedTranslationsAction(input);
       if (!result.ok) throw new Error(labels.refusals[result.reason]);
-      toast.success(
-        pending.kind === "sync" ? labels.syncDone : fill(labels.retryDone, { count: result.count }),
-      );
+      announceTranslationWork();
+      toast.success(fill(labels.retryDone, { count: result.count }));
     });
   };
 
@@ -170,14 +162,8 @@ function useScopedActions(labels: OverviewLabels) {
       onOpenChange={(open) => {
         if (!open) setPending(null);
       }}
-      title={
-        pending?.kind === "retry"
-          ? labels.retryTitle
-          : pending?.language
-            ? fill(labels.syncTitle, { language: pending.language })
-            : labels.syncAllTitle
-      }
-      description={pending?.kind === "retry" ? labels.retryBody : labels.syncBody}
+      title={labels.retryTitle}
+      description={labels.retryBody}
       confirmLabel={labels.confirm}
       cancelLabel={labels.cancel}
       onConfirm={confirm}
@@ -197,6 +183,7 @@ export function LocalesTable({
   labels: OverviewLabels;
 }) {
   const { busy, setPending, dialog } = useScopedActions(labels);
+  const [syncTarget, setSyncTarget] = useState<SyncTarget | null>(null);
   const { tableProps } = useClientTable(rows, {
     searchText: (row) => `${row.name} ${row.nativeName} ${row.code}`,
     sortValues: {
@@ -311,26 +298,20 @@ export function LocalesTable({
                       }
                     />
                     <DropdownMenuContent align="end">
-                      {/* Sync is for a LIVE language: translating for one
-                          nobody can open spends money on nothing (ADR-163 #4). */}
-                      {row.original.isActive && (
-                        <DropdownMenuItem
-                          disabled={busy}
-                          onClick={() =>
-                            setPending({
-                              kind: "sync",
-                              locale: row.original.code,
-                              language: row.original.name,
-                            })
-                          }
-                        >
-                          <RefreshCw aria-hidden data-icon="inline-start" />
-                          {labels.sync}
-                        </DropdownMenuItem>
-                      )}
+                      {/* Sync works for a language before it is live: that
+                          is how one is prepared for go-live (ADR-189 #1). */}
+                      <DropdownMenuItem
+                        disabled={busy}
+                        onClick={() =>
+                          setSyncTarget({ locale: row.original.code, language: row.original.name })
+                        }
+                      >
+                        <RefreshCw aria-hidden data-icon="inline-start" />
+                        {labels.sync}
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={busy || row.original.failed === 0}
-                        onClick={() => setPending({ kind: "retry", locale: row.original.code })}
+                        onClick={() => setPending({ locale: row.original.code })}
                       >
                         <RotateCcw aria-hidden data-icon="inline-start" />
                         {labels.retryFailed}
@@ -359,12 +340,9 @@ export function LocalesTable({
 
   return (
     <>
-      {canApprove && rows.some((row) => row.isActive) && (
+      {canApprove && (
         <HeaderActions>
-          <Button size="sm" disabled={busy} onClick={() => setPending({ kind: "sync" })}>
-            <RefreshCw aria-hidden data-icon="inline-start" />
-            {labels.syncAll}
-          </Button>
+          <SyncButton variant="default" />
         </HeaderActions>
       )}
       <DataTable
@@ -373,6 +351,7 @@ export function LocalesTable({
         labels={tableLabels(labels, labels.table.search)}
       />
       {dialog}
+      <SyncDialog target={syncTarget} onClose={() => setSyncTarget(null)} />
     </>
   );
 }
@@ -575,12 +554,7 @@ export function FailuresTable({
     <>
       {canApprove && (
         <HeaderActions>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => setPending({ kind: "retry" })}
-          >
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => setPending({})}>
             <RotateCcw aria-hidden data-icon="inline-start" />
             {labels.retryAll}
           </Button>

@@ -15,6 +15,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type * as LanguagesModule from "./languages.ts";
 import type * as InterfaceTextModule from "./interface-text.ts";
 import type * as AdminModule from "./translation-admin.ts";
+import type * as RunnerModule from "./translation-runner.ts";
 import type * as I18nModule from "@repo/i18n";
 import type * as TranslateModule from "@repo/translate";
 
@@ -27,6 +28,7 @@ let db: typeof DbClient;
 let languages: typeof LanguagesModule;
 let text: typeof InterfaceTextModule;
 let admin: typeof AdminModule;
+let runner: typeof RunnerModule;
 let i18n: typeof I18nModule;
 let translate: typeof TranslateModule;
 let userId: string;
@@ -59,6 +61,7 @@ beforeAll(async () => {
   languages = await import("./languages.ts");
   text = await import("./interface-text.ts");
   admin = await import("./translation-admin.ts");
+  runner = await import("./translation-runner.ts");
   i18n = await import("@repo/i18n");
   translate = await import("@repo/translate");
   server.listen({ onUnhandledRequest: "error" });
@@ -295,32 +298,115 @@ describe("interface text (ADR-178 #3–#5)", () => {
     expect(await db.messageOverride.count({ where: { locale: "en" } })).toBe(0);
   });
 
-  it("machine-fills missing keys in batches without overwriting a person's text", async () => {
+  it("queues the fill and the queue finishes it, for an off language, keeping a person's text", async () => {
     await text.saveInterfaceText(userId, {
       locale: "hi",
       key: KEY_BEGINNER,
       value: "Débutant",
     });
+    expect((await db.locale.findUniqueOrThrow({ where: { code: "hi" } })).isActive).toBe(false);
     const google = fakeGoogleTranslate({ validKey: KEY });
     server.use(google.handler);
 
-    const first = await text.fillInterfaceText(userId, { locale: "hi" });
-    if (!first.ok) throw new Error(first.reason);
-    expect(first.translated).toBeGreaterThan(0);
-    expect(first.translated + first.failed).toBeLessThanOrEqual(text.INTERFACE_TEXT_FILL_LIMIT);
-    expect(google.calls.length).toBeGreaterThan(0);
+    // ADR-189 #3: the press translates nothing, it queues one job.
+    const queued = await text.fillInterfaceText(userId, { locale: "hi" });
+    if (!queued.ok) throw new Error(queued.reason);
+    expect(queued.remaining).toBeGreaterThan(text.INTERFACE_TEXT_FILL_LIMIT);
+    expect(google.calls).toHaveLength(0);
+    expect(
+      await db.translationJob.findMany({
+        where: { entityType: text.INTERFACE_TEXT_JOB_TYPE },
+        select: { entityId: true, locale: true, status: true },
+      }),
+    ).toEqual([{ entityId: "hi", locale: "hi", status: "PENDING" }]);
 
-    const machine = await db.messageOverride.count({ where: { locale: "hi", isMachine: true } });
-    expect(machine).toBe(first.translated);
+    // One drain requeues the job pass after pass until nothing is missing.
+    await runner.drainTranslationQueue();
+    const counts = await text.countInterfaceText("hi");
+    expect(counts.missing).toBe(counts.manual);
+    expect(
+      await db.translationJob.findFirstOrThrow({
+        where: { entityType: text.INTERFACE_TEXT_JOB_TYPE },
+      }),
+    ).toMatchObject({ status: "DONE" });
+    expect(await db.messageOverride.count({ where: { locale: "hi", isMachine: true } })).toBe(
+      queued.remaining,
+    );
     expect(await i18n.catalogMessage("hi", KEY_BEGINNER)).toBe("Débutant");
 
-    const second = await text.fillInterfaceText(userId, { locale: "hi" });
-    if (!second.ok) throw new Error(second.reason);
-    expect(second.remaining).toBeLessThan(first.remaining);
+    // Nothing left: a second press queues nothing.
+    const again = await text.fillInterfaceText(userId, { locale: "hi" });
+    expect(again).toEqual({ ok: true, remaining: 0, manual: counts.manual });
 
     expect(await text.fillInterfaceText(userId, { locale: "en" })).toEqual({
       ok: false,
       reason: "isDefault",
     });
+  });
+
+  it("a reset Sync re-translates the machine's strings in place and keeps a person's (ADR-191)", async () => {
+    await db.translationJob.deleteMany();
+    const machine = await db.messageOverride.findFirstOrThrow({
+      where: { locale: "hi", isMachine: true },
+    });
+    await db.messageOverride.update({ where: { id: machine.id }, data: { value: "stale" } });
+    const google = fakeGoogleTranslate({ validKey: KEY });
+    server.use(google.handler);
+
+    expect(await admin.syncTranslations(userId, { locale: "hi", mode: "reset" })).toEqual({
+      ok: true,
+      locales: ["hi"],
+      count: 1,
+    });
+    // Marked, not deleted: the old text is served until the new one lands.
+    expect(await db.messageOverride.findUniqueOrThrow({ where: { id: machine.id } })).toMatchObject(
+      { value: "stale", redo: true },
+    );
+    const before = await text.countInterfaceText("hi");
+    expect(before.missing).toBeGreaterThan(before.manual);
+
+    await runner.drainTranslationQueue();
+    const after = await db.messageOverride.findUniqueOrThrow({ where: { id: machine.id } });
+    expect(after).toMatchObject({ isMachine: true, redo: false });
+    expect(after.value).not.toBe("stale");
+    expect(await db.messageOverride.count({ where: { locale: "hi", redo: true } })).toBe(0);
+    expect(await i18n.catalogMessage("hi", KEY_BEGINNER)).toBe("Débutant");
+    expect(
+      await db.auditLog.findFirst({
+        where: { action: "translations.sync", entityId: "hi" },
+        orderBy: { createdAt: "desc" },
+      }),
+    ).toMatchObject({ changes: { after: { mode: "reset" } } });
+    await db.translationJob.deleteMany();
+  });
+
+  it("Sync queues interface text and content for an off language; switching off cancels", async () => {
+    await db.translationJob.deleteMany();
+    expect(await admin.syncTranslations(userId, { locale: "zz", mode: "missing" })).toEqual({
+      ok: false,
+      reason: "unknownLocale",
+    });
+    expect(await admin.syncTranslations(userId, { locale: "es", mode: "missing" })).toEqual({
+      ok: true,
+      locales: ["es"],
+      count: 1,
+    });
+    const jobs = await db.translationJob.findMany({
+      where: { locale: "es" },
+      select: { kind: true, entityType: true },
+      orderBy: { kind: "asc" },
+    });
+    expect(jobs).toEqual([
+      { kind: "ITEM", entityType: text.INTERFACE_TEXT_JOB_TYPE },
+      { kind: "BACKFILL_LOCALE", entityType: translate.BACKFILL_WILDCARD },
+    ]);
+
+    const [progress] = await admin.loadTranslationProgress({ locale: "es" });
+    expect(progress).toMatchObject({ code: "es", isActive: false, queued: 2, failed: 0 });
+    expect(progress!.interfaceText.total).toBeGreaterThan(0);
+
+    // ADR-189 #4: off stops spending by deleting the queued work.
+    await admin.setLocaleActive(userId, { locale: "es", active: false });
+    expect(await db.translationJob.count({ where: { locale: "es" } })).toBe(0);
   });
 });

@@ -225,7 +225,7 @@ describe("Arabic promotions", () => {
 describe("Arabic settings", () => {
   const seed = readFileSync(new URL("../prisma/seed.ts", import.meta.url), "utf8");
 
-  it("covers both human-only legal keys, so Arabic can be switched on (ADR-165 #9)", () => {
+  it("covers both legal keys, so Arabic's are a person's words rather than a machine's", () => {
     expect(SETTINGS_AR["legal.riskDisclaimer"]?.fields.value).toBeTruthy();
     expect(SETTINGS_AR["legal.copyrightNotice"]?.fields.value).toBeTruthy();
   });

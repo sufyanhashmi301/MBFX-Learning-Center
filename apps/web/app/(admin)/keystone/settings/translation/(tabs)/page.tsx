@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { loadTranslationOverview } from "@repo/core";
+import { loadTranslationOverview, loadTranslationProgress } from "@repo/core";
 import { can, requirePermission } from "@repo/rbac";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/components/alert";
 import { MetricCard } from "@repo/ui/components/metric-card";
@@ -15,19 +15,23 @@ import {
   type OverviewLabels,
   type TypeRow,
 } from "./overview-tables.tsx";
+import { TranslationProgressPanel } from "./translation-progress.tsx";
 
 // Settings → Translation → Overview (plan §5, ADR-163): how much of each
 // language is done and by whom, what the queue is doing, what failed, and what
 // this month has cost. `translations.view`; Sync and Retry are
 // `translations.approve`, re-checked by their actions.
 //
-// Every figure is read uncached; `LiveRefresh` keeps the page current while a
-// backfill runs, which is the progress bar plan §4.4 asks for.
+// Every figure is read uncached. The Progress section polls while work is
+// queued (ADR-189 #6); `LiveRefresh` keeps the rest of the page current.
 export default async function TranslationOverviewPage() {
   const subject = await requirePermission("translations.view");
   const t = await getTranslations("admin.translate");
   const tAdmin = await getTranslations("admin");
-  const overview = await loadTranslationOverview();
+  const [overview, progress] = await Promise.all([
+    loadTranslationOverview(),
+    loadTranslationProgress(),
+  ]);
   const number = new Intl.NumberFormat("en");
 
   const typeLabel = (type: string) =>
@@ -113,22 +117,18 @@ export default async function TranslationOverviewPage() {
     failedCount: t("overview.failedCount", { count: "{count}" }),
     backfilling: t("overview.backfilling"),
     sync: t("overview.sync"),
-    syncAll: t("overview.syncAll"),
     retryFailed: t("overview.retryFailed"),
     retryAll: t("overview.retryAll"),
     openActions: t("overview.openActions", { language: "{language}" }),
-    syncTitle: t("overview.syncTitle", { language: "{language}" }),
-    syncAllTitle: t("overview.syncAllTitle"),
-    syncBody: t("overview.syncBody"),
     retryTitle: t("overview.retryTitle"),
     retryBody: t("overview.retryBody"),
     confirm: tAdmin("confirm"),
     cancel: tAdmin("cancel"),
-    syncDone: t("overview.syncDone"),
     retryDone: t("overview.retryDone", { count: "{count}" }),
     refusals: {
-      inactiveLocale: t("overview.refusals.inactiveLocale"),
-      noActiveLocale: t("overview.refusals.noActiveLocale"),
+      unknownLocale: t("overview.refusals.unknownLocale"),
+      noLocale: t("overview.refusals.noLocale"),
+      providerUnavailable: t("overview.refusals.providerUnavailable"),
     },
     noLocalesTitle: t("overview.noLocalesTitle"),
     noLocalesBody: t("overview.noLocalesBody"),
@@ -184,6 +184,11 @@ export default async function TranslationOverviewPage() {
           }}
         />
       </div>
+
+      <AdminSection title={t("progress.title")}>
+        <p className="text-sm text-muted-foreground">{t("progress.description")}</p>
+        <TranslationProgressPanel initial={progress} canSync={canApprove} />
+      </AdminSection>
 
       <AdminSection title={t("overview.languagesTitle")}>
         <p className="text-sm text-muted-foreground">{t("overview.languagesDescription")}</p>

@@ -21,7 +21,7 @@
 //   #10   DONE jobs go after 7 days, usage rows after 90.
 import { randomUUID } from "node:crypto";
 import { db } from "@repo/db";
-import type { TranslateReason } from "@repo/contracts";
+import { PAUSING_TRANSLATE_REASONS, type TranslateReason } from "@repo/contracts";
 
 import { isPausing, reasonOf, TranslateError } from "./errors.ts";
 
@@ -171,6 +171,34 @@ export async function retryFailedJobs(locale?: string): Promise<number> {
     },
   });
   return result.count;
+}
+
+/**
+ * Deletes one locale's PENDING jobs, items and backfill alike (ADR-189 #4):
+ * what switching a language off does, so that it stops spending. A RUNNING
+ * job finishes its own pass; nothing queues behind it.
+ */
+export async function cancelPendingLocaleJobs(locale: string): Promise<number> {
+  const result = await db.translationJob.deleteMany({ where: { locale, status: "PENDING" } });
+  return result.count;
+}
+
+/**
+ * Locales whose queued work is held back by a pause (a budget or quota
+ * refusal moved `runAfter` on, ADR-162 #6), with the reason. Progress
+ * readouts say "paused" instead of showing a bar that has silently stopped.
+ */
+export async function loadPausedLocales(now: Date = new Date()): Promise<Map<string, string>> {
+  const rows = await db.translationJob.findMany({
+    where: {
+      status: "PENDING",
+      runAfter: { gt: now },
+      lastError: { in: [...PAUSING_TRANSLATE_REASONS] },
+    },
+    select: { locale: true, lastError: true },
+    distinct: ["locale"],
+  });
+  return new Map(rows.map((row) => [row.locale, row.lastError!]));
 }
 
 /** Returns RUNNING jobs whose lease ran out to PENDING (ADR-162 #4). */
